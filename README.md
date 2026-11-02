@@ -25,3 +25,6 @@ liminal-integrator service install       # run unattended (remove, status, run)
 ```
 
 The app's own command line answers the same: `python -m liminal fetcher ...`, `python -m liminal service ...`.
+
+In the workspace this checkout is `store/`, with the databases beside it in `store/data/` (never in git) and the
+plugins it loads in `plugins/` (liminal-lib's `layout.py`).
