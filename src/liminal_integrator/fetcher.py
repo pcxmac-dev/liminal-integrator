@@ -105,10 +105,11 @@ class Assessment:
     feeds: list[str] = field(default_factory=list)  # the plugins of the plan, in order
     live: list[list[str]] = field(default_factory=list)  # [(plugin, what)] for the current session, freshest first
     note: str = ""  # why nothing can be done, when nothing can
+    retired: str | None = None  # no longer listed since this day: its history completed, no new data asked for
 
     def as_dict(self) -> dict:
         return {"symbol": self.symbol, "asset": self.asset, "offers": self.offers, "jobs": self.jobs,
-                "feeds": self.feeds, "live": self.live, "note": self.note}
+                "feeds": self.feeds, "live": self.live, "note": self.note, "retired": self.retired}
 
 
 def assess(store, settings, symbol: str, kinds=("bars",), now: datetime | None = None) -> Assessment:
@@ -129,9 +130,14 @@ def assess(store, settings, symbol: str, kinds=("bars",), now: datetime | None =
     if not rows:
         return Assessment(symbol, None, note="no feed set up here collects it")
     asset = rows[0]["asset"]
+    # A retired symbol (no longer listed) is held too: the user, 2026-11-02: "if however, the retired
+    # stock data is still available on any of the sources, complete the retired symbol". Its feeds'
+    # runs fill what history they still have and ask for nothing after its last listed day
+    # (collector.retired_end); the app asks for it only while some feed's history is incomplete.
+    retired = max((str(r["retired_on"]) for r in rows if r.get("retired_on")), default=None) \
+        if all(r.get("retired_on") for r in rows) else None
     holding = [r["source"] for r in rows
-               if r["source"] in profiles and asset in profiles[r["source"]].assets
-               and r.get("closed_at") is None and r.get("retired_on") is None]
+               if r["source"] in profiles and asset in profiles[r["source"]].assets and r.get("closed_at") is None]
     scheme = lib.sourcing.standing(store, profiles, now)
     offers = []
     for o in scheme.offers:
@@ -153,10 +159,10 @@ def assess(store, settings, symbol: str, kinds=("bars",), now: datetime | None =
     order = {r: i for i, r in enumerate(lib.sourcing.JOBS)}
     jobs.sort(key=lambda j: (order.get(j["resolution"], len(order)), j["start"]))
     feeds = list(dict.fromkeys(j["plugin"] for j in jobs))
-    live = [[s, w] for s, w in scheme.live.get(asset, []) if s in holding] if "live" in kinds else []
+    live = [[s, w] for s, w in scheme.live.get(asset, []) if s in holding and not retired] if "live" in kinds else []
     note = "" if feeds else ("no plugin set up here delivers its history" if holding
                              else "its feeds are closed, or not set up here")
-    return Assessment(symbol, asset, offers, jobs, feeds, live, note)
+    return Assessment(symbol, asset, offers, jobs, feeds, live, note, retired)
 
 
 # -- the fetcher ---------------------------------------------------------------------------------
@@ -286,6 +292,8 @@ class Fetcher:
             lib.collector.request_priority(store, a.symbol, now)
             held = [name for name in a.feeds if self.hold_feed(name)]
             detail = f"on {', '.join(held)}" if held else "no feed's run could be started"
+            if a.retired:
+                detail += f" (retired since {a.retired}: its history completed, no new data asked for)"
             store.request_update(r["id"], state="collecting", plan=a.as_dict(), detail=detail, now=now)
             with self.lock:
                 self.active[r["id"]] = {"symbol": a.symbol, "feeds": a.feeds, "asked": now, "asked_iso": r["asked_at"],
