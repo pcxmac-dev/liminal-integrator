@@ -118,12 +118,19 @@ def test_the_windows_task_and_the_systemd_unit(tmp_path, monkeypatch):
     cmd = service.command()
     assert cmd[1:] == ["-m", "liminal_integrator", "service", "run"] and Path(cmd[0]).name.startswith("python")
     assert service.command(daemon=True)[1:] == ["-m", "liminal_integrator", "service", "run", "--daemon"]
+    # the task through the Task Scheduler cmdlets (schtasks refuses a logon trigger without elevation)
     install = service.task_args("install")
-    assert install[:4] == ["schtasks", "/Create", "/TN", "LiminalIntegrator"] and "/SC" in install and "ONLOGON" in install
-    assert install[install.index("/TR") + 1].endswith("-m liminal_integrator service run") and install[-1] == "/F"
-    assert service.task_args("install", daemon=True)[install.index("/TR") + 1].endswith("service run --daemon")
-    assert service.task_args("remove") == ["schtasks", "/Delete", "/TN", "LiminalIntegrator", "/F"]
-    assert service.task_args("status")[:2] == ["schtasks", "/Query"] and service.task_args("start")[1] == "/Run"
+    assert install[:4] == ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"] and len(install) == 5
+    script = install[-1]
+    assert script.startswith("$ErrorActionPreference = 'Stop'; try { ") and script.endswith("exit 1 }")
+    assert f"-Execute '{cmd[0]}' -Argument '-m liminal_integrator service run'" in script
+    assert "New-ScheduledTaskTrigger -AtLogOn -User" in script and "Register-ScheduledTask -TaskName 'LiminalIntegrator'" in script
+    assert "-ExecutionTimeLimit ([TimeSpan]::Zero)" in script and "-MultipleInstances IgnoreNew" in script
+    assert "-Argument '-m liminal_integrator service run --daemon'" in service.task_args("install", daemon=True)[-1]
+    assert "Unregister-ScheduledTask -TaskName 'LiminalIntegrator' -Confirm:$false" in service.task_args("remove")[-1]
+    assert "Get-ScheduledTask -TaskName 'LiminalIntegrator'" in service.task_args("status")[-1]
+    assert "Start-ScheduledTask -TaskName 'LiminalIntegrator'" in service.task_args("start")[-1]
+    assert service._ps("it's") == "'it''s'"  # a quote in a path doubled, as PowerShell wants it
     unit = service.unit_text(settings.db_path)
     assert "ExecStart=" in unit and "-m liminal_integrator service run\n" in unit and "while a page is in touch" in unit
     assert f"Environment=LIMINAL_DB={settings.db_path}" in unit
@@ -138,12 +145,15 @@ def test_the_windows_task_and_the_systemd_unit(tmp_path, monkeypatch):
     monkeypatch.setattr(service.sys, "platform", "win32")
     lines: list[str] = []
     assert service.install(settings, lines.append) == 0
-    assert calls[0][1] == "/Create" and calls[1][1] == "/Run" and "at your logon, as you" in lines[-1]
+    assert "Register-ScheduledTask" in calls[0][-1] and "Start-ScheduledTask" in calls[1][-1] and "at your logon, as you" in lines[-1]
     assert "its page at http://127.0.0.1:8785/" in lines[-1] and "while a page is in touch" in lines[-1]
     assert service.install(settings, lines.append, daemon=True) == 0
-    assert calls[-2][calls[-2].index("/TR") + 1].endswith("--daemon") and "held for good" in lines[-1]
-    assert service.remove(settings, lines.append) == 0 and calls[-1][1] == "/Delete"
-    assert service.status(settings, lines.append) == 0 and calls[-1][1] == "/Query"
+    assert "service run --daemon'" in calls[-2][-1] and "held for good" in lines[-1]
+    assert service.remove(settings, lines.append) == 0 and "Unregister-ScheduledTask" in calls[-1][-1]
+    assert service.status(settings, lines.append) == 0 and "Get-ScheduledTask" in calls[-1][-1]
+    monkeypatch.setattr(service, "_call", lambda args: 1)  # the Task Scheduler refused: said, not started
+    assert service.install(settings, lines.append) == 1 and "could not be registered" in lines[-1]
+    monkeypatch.setattr(service, "_call", lambda args: calls.append(args) or 0)
     monkeypatch.setattr(service.sys, "platform", "linux")
     monkeypatch.setattr(service, "unit_path", lambda: tmp_path / "user" / "liminal-integrator.service")
     calls.clear()

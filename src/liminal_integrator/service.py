@@ -13,8 +13,10 @@ go on on their own (every feed's run once new data can exist, the closed months'
 between passes it holds no store and no plugin's run.
 
 - Windows: a Task Scheduler task at your logon, as you (TASK_NAME), running `liminal-integrator
-  service run` with pythonw (no window). As you it sees your user environment variables, where the
-  keys live; a service under a service account would not, unless you stored your password with it
+  service run` with pythonw (no window), registered through the Task Scheduler cmdlets: `schtasks
+  /Create /SC ONLOGON` answers "Access is denied" without elevation, while a task triggered by your
+  own logon is yours to register. As you it sees your user environment variables, where the keys
+  live; a service under a service account would not, unless you stored your password with it
   yourself.
 - Linux: a systemd user unit (UNIT_NAME, ~/.config/systemd/user), enabled and started; with
   lingering (`loginctl enable-linger`) it runs without a login. A user unit does not inherit your
@@ -69,16 +71,35 @@ def _does(daemon: bool) -> str:
 
 
 # -- Windows: a scheduled task at logon ---------------------------------------------------------
-def task_args(action: str, daemon: bool = False) -> list[str]:
-    """The schtasks line for install, remove, status or start."""
+def _ps(text: str) -> str:
+    """`text` as a PowerShell single-quoted string."""
+    return "'" + text.replace("'", "''") + "'"
+
+
+def task_script(action: str, daemon: bool = False) -> str:
+    """The PowerShell (the Task Scheduler cmdlets) for install, remove, status or start."""
     if action == "install":
-        line = " ".join(f'"{a}"' if " " in a else a for a in command(daemon))
-        return ["schtasks", "/Create", "/TN", TASK_NAME, "/SC", "ONLOGON", "/TR", line, "/F"]
+        exe, *args = command(daemon)
+        return (f"$a = New-ScheduledTaskAction -Execute {_ps(exe)} -Argument {_ps(' '.join(args))}; "
+                "$t = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\\$env:USERNAME\"; "
+                "$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew "
+                "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
+                f"Register-ScheduledTask -TaskName {_ps(TASK_NAME)} -Action $a -Trigger $t -Settings $s -Force | Out-Null")
     if action == "remove":
-        return ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"]
+        return f"Unregister-ScheduledTask -TaskName {_ps(TASK_NAME)} -Confirm:$false"
     if action == "start":
-        return ["schtasks", "/Run", "/TN", TASK_NAME]
-    return ["schtasks", "/Query", "/TN", TASK_NAME, "/V", "/FO", "LIST"]
+        return f"Start-ScheduledTask -TaskName {_ps(TASK_NAME)}"
+    return (f"Get-ScheduledTask -TaskName {_ps(TASK_NAME)} | Format-List TaskName, State, "
+            "@{n='Command';e={$_.Actions[0].Execute + ' ' + $_.Actions[0].Arguments}}; "
+            f"Get-ScheduledTaskInfo -TaskName {_ps(TASK_NAME)} | Format-List LastRunTime, LastTaskResult, NextRunTime")
+
+
+def task_args(action: str, daemon: bool = False) -> list[str]:
+    """The command line for install, remove, status or start: PowerShell running task_script,
+    failing (exit 1) when a cmdlet does."""
+    script = ("$ErrorActionPreference = 'Stop'; try { " + task_script(action, daemon)
+              + " } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }")
+    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]
 
 
 # -- Linux: a systemd user unit ------------------------------------------------------------------
@@ -119,6 +140,8 @@ def install(settings, log: Log = print, daemon: bool = False) -> int:
             _call(task_args("start"))
             log(f"service: the task {TASK_NAME} runs {runs} at your logon, as you (your user environment variables, "
                 f"the keys among them, are its); started now: {_does(daemon)}. `service remove` takes it away.")
+        else:
+            log(f"service: the task {TASK_NAME} could not be registered (the Task Scheduler's answer is above)")
         return code
     if sys.platform.startswith("linux"):
         path = unit_path()

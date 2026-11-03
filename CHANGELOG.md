@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 (2026-11-02)
+
+On Windows the logon task is registered through the Task Scheduler cmdlets (Register-ScheduledTask, a trigger at
+your own logon): `schtasks /Create /SC ONLOGON` answers "Access is denied" without elevation. `service install` says
+so when the Task Scheduler refuses.
+
 ## 1.1.0 (2026-11-02)
 
 Its page from the browser, like the app's (the user: "i need a way to run it from the browser like the other

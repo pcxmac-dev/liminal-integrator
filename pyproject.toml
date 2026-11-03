@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "liminal-integrator"
-version = "1.1.0"  # the integrator's own release (CHANGELOG.md)
+version = "1.1.1"  # the integrator's own release (CHANGELOG.md)
 description = "The Liminal integrator: the fetcher, which takes requests for symbols, assesses the work over the plugins and collects, and serves the data; a service when you want it to."
 readme = "README.md"
 requires-python = ">=3.10"
