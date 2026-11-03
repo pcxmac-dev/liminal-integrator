@@ -283,8 +283,20 @@ class Fetcher:
         s = self.settings
         while (r := store.request_next(now)) is not None:
             if s.offline or s.read_only:
-                store.request_update(r["id"], state="failed", now=now,
-                                     detail="nothing fetched: this fetcher is offline or reads only (LIMINAL_OFFLINE, LIMINAL_READONLY)")
+                # offline: assessed all the same (no request: the plugins' records and the watchlist), so
+                # the page shows which feeds would be asked (the user, 2026-11-03: going through the UI
+                # plugin by plugin on an offline copy); reads only: nothing written beyond the request
+                plan = None
+                if not s.read_only:
+                    try:
+                        plan = assess(store, s, r["symbol"], r["kinds"], now).as_dict()
+                    except Exception:  # noqa: BLE001 - the plan is a courtesy here
+                        plan = None
+                asked = f"; it would ask {', '.join(plan['feeds'])}" if plan and plan.get("feeds") else \
+                    f"; {plan['note']}" if plan and plan.get("note") else ""
+                store.request_update(r["id"], state="failed", plan=plan, now=now,
+                                     detail="nothing fetched: this fetcher is offline or reads only (LIMINAL_OFFLINE, "
+                                            "LIMINAL_READONLY)" + asked)
                 continue
             try:
                 a = assess(store, s, r["symbol"], r["kinds"], now)

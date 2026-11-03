@@ -212,7 +212,12 @@ def test_halted_the_requests_wait_and_offline_they_fail(settings, monkeypatch, r
     lib.collector.set_pause(store, False, NOW)
     f.settings = replace(settings, offline=True)
     f.tick(store, NOW)
-    assert store.request_get(r["id"])["state"] == "failed" and "offline" in store.request_get(r["id"])["detail"]
+    row = store.request_get(r["id"])
+    assert row["state"] == "failed" and "offline" in row["detail"] and "it would ask massive" in row["detail"]
+    assert row["plan"]["feeds"] == ["massive"] and runs == {}  # assessed, so the page shows the plan; nothing asked
+    r2 = store.request_put("TSE:7203", by="page", now=NOW)
+    f.tick(store, NOW + timedelta(seconds=1))
+    assert "no feed set up here carries XTKS listings" in store.request_get(r2["id"])["detail"]
     store.close()
 
 

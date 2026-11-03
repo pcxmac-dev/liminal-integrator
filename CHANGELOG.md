@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1 (2026-11-03)
+
+An offline copy of the fetcher still assesses a request before failing it, so its page shows which feeds would be
+asked (or why none would) without a request being sent: going through the UI plugin by plugin on the offline
+copy (the user, 2026-11-03), a request showed only "nothing fetched: offline".
+
 ## 1.2.0 (2026-11-02)
 
 A symbol is assessed under its stored ticker however it is typed (`SPCX::NASDAQ`, `EUR/USD`, `TSE:7203`: the
