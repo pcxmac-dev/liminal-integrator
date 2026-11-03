@@ -113,6 +113,7 @@ def test_a_listing_abroad_goes_to_the_feeds_carrying_its_exchange_and_to_none_ot
     with lib.Store(settings.db_path) as store:
         a = fetcher.assess(store, settings, "600519.SS", now=NOW)  # Shanghai: Tiingo carries it, Massive does not
         assert a.symbol == "600519.SS" and a.asset == "stock" and a.feeds == ["tiingo"] and a.note == ""
+        assert [(j["plugin"], j["resolution"], j["end"], j["unique"]) for j in a.jobs] == [("tiingo", "day", None, True)]  # one job, not the US market's eras
         assert {w["source"] for w in store.watchlist(ticker="600519.SS")} == {"tiingo"}
         assert store.watchlist(ticker="600519.SS")[0]["exchange"] == "XSHG"
         none = fetcher.assess(store, settings, "TSE:7203", now=NOW)  # Tokyo: no feed set up here

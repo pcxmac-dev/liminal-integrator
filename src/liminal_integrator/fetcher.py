@@ -163,6 +163,21 @@ def assess(store, settings, symbol: str, kinds=("bars",), now: datetime | None =
         jobs.append({"plugin": first, "resolution": e.resolution, "market": e.market, "start": e.start.isoformat(),
                      "end": e.end.isoformat() if e.end else None, "unique": e.unique,
                      "days": round(e.days.get(first, 0.0), 3)})
+    if spec.asset == "stock" and lib.is_foreign(spec.exchange):
+        # a listing abroad: the eras are the US market's cuts between feeds that do not carry it, so
+        # each holding feed's work is one job per resolution, from its earliest era on (600519.SS on
+        # Tiingo showed three day eras cut at Massive's and Alpaca's starts: 2026-11-03)
+        merged: dict[tuple, dict] = {}
+        for j in jobs:
+            key = (j["plugin"], j["resolution"], j["market"])
+            was = merged.get(key)
+            if was is None:
+                merged[key] = {**j, "unique": True}
+            else:
+                was["start"] = min(was["start"], j["start"])
+                was["end"] = None if was["end"] is None or j["end"] is None else max(was["end"], j["end"])
+                was["days"] = round(was["days"] + j["days"], 3)
+        jobs = list(merged.values())
     order = {r: i for i, r in enumerate(lib.sourcing.JOBS)}
     jobs.sort(key=lambda j: (order.get(j["resolution"], len(order)), j["start"]))
     feeds = list(dict.fromkeys(j["plugin"] for j in jobs))

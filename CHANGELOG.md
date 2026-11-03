@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.3 (2026-11-03)
+
+A listing abroad's plan is one job per feed and resolution, from the feed's earliest era on: the delivery scheme's
+eras are the US market's cuts between feeds that do not carry the listing (600519.SS on Tiingo showed three day eras
+cut at Massive's and Alpaca's starts).
+
 ## 1.2.2 (2026-11-03)
 
 `liminal-integrator request` puts a symbol on the stack under its stored name (`twse:2330` as `2330.TW`, `eur/usd` as
