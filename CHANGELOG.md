@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2 (2026-11-02)
+
+The app is liminal-app (package `liminal_app`): the page and the front are imported from there, the extras pass
+runs `python -m liminal_app sync --extras-only` (the library's `host.APP_MODULE`), and the distribution depends on
+`liminal-app`; CI installs it from its renamed repository.
+
 ## 1.1.1 (2026-11-02)
 
 On Windows the logon task is registered through the Task Scheduler cmdlets (Register-ScheduledTask, a trigger at

@@ -199,7 +199,7 @@ def test_the_standing_pass_holds_every_feed_and_waits_for_new_data(settings, mon
     f.tick(store, NOW)
     assert set(runs) == set_up - {"tiingo"} and f.by_pass == set(runs) and f.history is not None
     assert "massive" in runs and "tiingo" not in runs
-    assert spawned[-1][1:] == ["-m", "liminal", "sync", "--extras-only"]
+    assert spawned[-1][1:] == ["-m", "liminal_app", "sync", "--extras-only"]  # the app's module (host.APP_MODULE)
     assert f.next_due is not None and f.next_due > NOW and f.last_pass_at == NOW
     assert any("pass: " in m and "massive" in m and " held" in m and "nothing new before" in m for m in log)
     assert not f.pass_due(store, NOW + timedelta(minutes=5))  # within the hour: not again

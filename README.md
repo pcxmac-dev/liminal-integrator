@@ -1,8 +1,8 @@
 # liminal-integrator
 
 The fetcher of Liminal: the program that collects the market data and serves it. The chart app
-([liminal](https://github.com/pcxmac-dev/liminal)) is its client, and funnels every request of its
-pages to it; the library both build on is [liminal-lib](https://github.com/pcxmac-dev/liminal-lib).
+([liminal-app](https://github.com/pcxmac-dev/liminal-app)) is its client, and funnels every request of
+its pages to it; the library both build on is [liminal-lib](https://github.com/pcxmac-dev/liminal-lib).
 
 - A stack of requests in front: a symbol opened in the chart, or asked for on its page or the command
   line, goes first; its standing work queues behind. For each symbol it assesses the work over the
@@ -27,7 +27,7 @@ liminal-integrator host                  # one fetcher here, in the foreground, 
 liminal-integrator service install       # its page from your logon (--daemon: the fetcher held; remove, status, run)
 ```
 
-The app's own command line answers the same: `python -m liminal fetcher ...`, `python -m liminal service ...`.
+The app's own command line answers the same: `liminal fetcher ...`, `liminal service ...`.
 
 In the workspace this checkout is `store/`, with the databases beside it in `store/data/` (never in git) and the
 plugins it loads in `plugins/` (liminal-lib's `layout.py`).

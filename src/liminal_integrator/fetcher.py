@@ -442,7 +442,7 @@ class Fetcher:
         if self.extras is None or self.extras.poll() is not None:
             exe = Path(sys.executable)
             quiet = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
-            self.extras = self._spawn([str(quiet), "-m", "liminal", "sync", "--extras-only"])
+            self.extras = self._spawn([str(quiet), "-m", lib.host.APP_MODULE, "sync", "--extras-only"])
         if lib.plugin_fetchers() and (self.workers is None or not self.workers.is_alive()):
             self.workers = threading.Thread(target=self._run_plugins, name="fetcher-plugins", daemon=True)
             self.workers.start()

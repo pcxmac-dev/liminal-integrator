@@ -1,7 +1,7 @@
 """The integrator's command line: `liminal-integrator serve|status|request|pass|cancel|host` and
 `liminal-integrator service install|remove|status|run`, `--daemon` on serve, install and run for
-the fetcher held for good. The app's own command line answers the same (`python -m liminal fetcher
-...`, `python -m liminal service ...`), through here."""
+the fetcher held for good. The app's own command line answers the same (`liminal fetcher ...`,
+`liminal service ...`), through here."""
 from __future__ import annotations
 
 import argparse

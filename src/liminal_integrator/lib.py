@@ -21,18 +21,18 @@ from liminal_lib.symbols import resolve  # noqa: F401
 
 
 def page():
-    """The page and data API the fetcher serves: the chart app's (liminal.gui.server.serve_fetcher),
-    imported when a fetcher starts, not before (the app is the integrator's one dependency outside
-    the library, for this)."""
-    from liminal.gui.server import serve_fetcher
+    """The page and data API the fetcher serves: the chart app's (liminal_app.gui.server.serve_fetcher),
+    imported when a fetcher starts, not before (the app, liminal-app, is the integrator's one
+    dependency outside the library, for this)."""
+    from liminal_app.gui.server import serve_fetcher
 
     return serve_fetcher
 
 
 def front():
     """The front that keeps the fetcher's page at its port while the fetcher comes and goes (the
-    app's, liminal.gui.front.serve_front, in mode "fetcher"): `serve`, and the service. Imported
+    app's, liminal_app.gui.front.serve_front, in mode "fetcher"): `serve`, and the service. Imported
     when asked, not before."""
-    from liminal.gui.front import serve_front
+    from liminal_app.gui.front import serve_front
 
     return serve_front
