@@ -1,7 +1,8 @@
 """Every call into the library goes through here (the user, 2026-11-01: "make sure that the library
 calls contribute to code reuse"; "all lib calls will point to liminal-lib"): what the integrator
-uses of liminal-lib, by name, and nothing of the app but the page it serves (page()). A library
-piece the integrator needs is added to liminal-lib, never written here twice."""
+uses of liminal-lib, by name, and nothing of the app but the page it serves (page()) and the front
+that keeps that page at its port (front()). A library piece the integrator needs is added to
+liminal-lib, never written here twice."""
 from __future__ import annotations
 
 from liminal_lib import collector, config, freshness, proc, runner, sourcing  # noqa: F401
@@ -26,3 +27,12 @@ def page():
     from liminal.gui.server import serve_fetcher
 
     return serve_fetcher
+
+
+def front():
+    """The front that keeps the fetcher's page at its port while the fetcher comes and goes (the
+    app's, liminal.gui.front.serve_front, in mode "fetcher"): `serve`, and the service. Imported
+    when asked, not before."""
+    from liminal.gui.front import serve_front
+
+    return serve_front

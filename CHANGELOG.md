@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 (2026-11-02)
+
+Its page from the browser, like the app's (the user: "i need a way to run it from the browser like the other
+liminals"): `liminal-integrator serve` keeps the fetcher's page at its port (8785) through the app's front in
+fetcher mode, the fetcher started when a page comes and let go once none has been in touch for a while (its own
+page takes a free port, learnt from it), and `service install` keeps that page there from your logon (the task
+LiminalIntegrator on Windows, the unit liminal-integrator on Linux). A daemon when you want one (the user: "the
+integrator needs to be able to run autonomously in a 'daemon' mode"): `--daemon` on `serve` or `service install`
+holds the fetcher for good, started again if it ends, so it collects what it can on its own. `host` runs one
+fetcher in the foreground with nothing holding it, and `--port` picks the page's port.
+
 ## 1.0.1 (2026-11-02)
 
 A retired symbol (no longer listed) is assessed and held on the feeds that still have its history, so a source

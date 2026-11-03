@@ -1,23 +1,27 @@
 """The integrator's command line: `liminal-integrator serve|status|request|pass|cancel|host` and
-`liminal-integrator service install|remove|status|run`. The app's own command line answers the same
-(`python -m liminal fetcher ...`, `python -m liminal service ...`), through here."""
+`liminal-integrator service install|remove|status|run`, `--daemon` on serve, install and run for
+the fetcher held for good. The app's own command line answers the same (`python -m liminal fetcher
+...`, `python -m liminal service ...`), through here."""
 from __future__ import annotations
 
 import argparse
 import json
-import webbrowser
 
 from . import fetcher, lib, service
 
 
 def cmd_fetcher(args, settings) -> int:
-    """`serve` holds the fetcher here (started if none answers), its page in the browser, until
-    Ctrl+C; `status` shows its stack and state; `request SYMBOL...` asks it for symbols; `pass`
-    asks for a standing pass now; `cancel --id N` takes a request back; `host` runs one here."""
+    """`serve` keeps the fetcher's page here at its port (LIMINAL_FETCHER_PORT, 8785), open in the
+    browser, the fetcher running while a page is in touch, or with `--daemon` held for good so it
+    collects what it can on its own (service.py), until Ctrl+C; `status` shows its stack and state;
+    `request SYMBOL...` asks it for symbols; `pass` asks for a standing pass now; `cancel --id N`
+    takes a request back; `host` runs a fetcher here, in the foreground, nothing holding it."""
     log = lib.log_to(settings.db_path)
     if args.action == "host":
-        fetcher.run_host(settings, log)
+        fetcher.run_host(settings, log, port=args.port)
         return 0
+    if args.action == "serve":
+        return service.run(settings, log, open_browser=not args.no_browser, port=args.port, daemon=args.daemon)
     if args.action == "status":
         with lib.Store(settings.db_path) as store:
             status = lib.read_status(store)
@@ -61,33 +65,27 @@ def cmd_fetcher(args, settings) -> int:
             ok = store.request_cancel(args.id)
         print(f"#{args.id}: {'cancelled' if ok else 'not open'}")
         return 0 if ok else 1
-    held = lib.attach_fetcher(settings.db_path, log)
+    held = lib.attach_fetcher(settings.db_path, log)  # pass
     if held is None:
         print("no fetcher answered (and none could be started): see logs/liminal.log")
         return 1
     try:
-        if args.action == "pass":
-            print(json.dumps(held.ask(**{"pass": True})))
-            lib.wait_for_fetcher(held, log)
-            return 0
-        status = held.ask(status=True)
-        page = status.get("page") if isinstance(status, dict) else None
-        print(f"the fetcher is up (pid {held.host_pid}); its page: {page or 'none'}  (Ctrl+C lets it go)")
-        if page and not args.no_browser:
-            webbrowser.open(page)
-        lib.hold_until_interrupted()
+        print(json.dumps(held.ask(**{"pass": True})))
+        lib.wait_for_fetcher(held, log)
     finally:
         held.detach()
     return 0
 
 
 def cmd_service(args, settings) -> int:
-    """The fetcher as a service (service.py): install, remove, status, or run (what the service runs)."""
+    """The integrator's service from your logon (service.py): install, remove, status, or run (what
+    the installed service runs: `serve` without the browser); `--daemon` holds the fetcher for good."""
     log = lib.log_to(settings.db_path)
+    daemon = bool(getattr(args, "daemon", False))
     if args.action == "run":
-        return service.run(settings, log)
+        return service.run(settings, log, daemon=daemon)
     if args.action == "install":
-        return service.install(settings, log)
+        return service.install(settings, log, daemon=daemon)
     if args.action == "remove":
         return service.remove(settings, log)
     return service.status(settings, log)
@@ -101,20 +99,29 @@ def add_fetcher_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--kinds", default="bars", help="request: what about them, comma separated (bars, live)")
     p.add_argument("--wait", action="store_true", help="request: wait here until each request has ended")
     p.add_argument("--limit", type=int, default=40, help="status: requests shown")
+    p.add_argument("--port", type=int, help="serve, host: the page's port (LIMINAL_FETCHER_PORT, 8785; 0: a free one)")
     p.add_argument("--no-browser", action="store_true", help="serve: do not open its page")
+    p.add_argument("--daemon", action="store_true",
+                   help="serve: hold the fetcher for good as well, so it collects what it can on its own; otherwise it "
+                        "runs only while a page is in touch")
 
 
 def add_service_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("action", nargs="?", default="status", choices=["install", "remove", "status", "run"])
+    p.add_argument("--daemon", action="store_true",
+                   help="install, run: the fetcher held for good (it collects what it can on its own); otherwise it "
+                        "runs only while a page is in touch")
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="liminal-integrator", description=__doc__)
     sub = p.add_subparsers(dest="command")
-    f = sub.add_parser("fetcher", help="the fetcher: serve, status, request SYMBOL..., pass, cancel --id N, host")
+    f = sub.add_parser("fetcher", help="the fetcher: serve (its page here, in the browser; --daemon holds the fetcher "
+                                      "for good), status, request SYMBOL..., pass, cancel --id N, host")
     add_fetcher_arguments(f)
     f.set_defaults(func=cmd_fetcher)
-    s = sub.add_parser("service", help="the fetcher as a service: install, remove, status, run")
+    s = sub.add_parser("service", help="the integrator's service from your logon (its page; --daemon: the fetcher held "
+                                      "for good): install, remove, status, run")
     add_service_arguments(s)
     s.set_defaults(func=cmd_service)
     return p
