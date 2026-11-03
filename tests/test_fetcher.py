@@ -95,11 +95,42 @@ def test_a_symbol_nobody_watches_goes_on_the_feeds_that_can_collect_it_first(set
         assert none.feeds == [] and none.note == "no feed set up here collects it" and store.watchlist(ticker="NQ1!") == []
 
 
+def test_a_symbol_is_assessed_under_its_stored_ticker_however_it_is_typed(settings):
+    with lib.Store(settings.db_path) as store:
+        store.watch("massive", ["SPCX"], "minute", exchange="XNAS")
+        for typed in ("nasdaq:spcx", "SPCX::NASDAQ", " spcx "):
+            a = fetcher.assess(store, settings, typed, now=NOW)
+            assert a.symbol == "SPCX" and a.asset == "stock" and a.feeds  # its row, not a second one under the typed text
+        assert [w["ticker"] for w in store.watchlist(ticker="SPCX")] == ["SPCX"]
+        assert store.watchlist(ticker="SPCX::NASDAQ") == [] and store.watchlist(ticker="NASDAQ:SPCX") == []
+        fx = fetcher.assess(store, settings, "EUR/USD", now=NOW)
+        assert fx.symbol == "EURUSD" and fx.asset == "fx" and store.watchlist(ticker="EURUSD")
+
+
+def test_a_listing_abroad_goes_to_the_feeds_carrying_its_exchange_and_to_none_otherwise(settings, monkeypatch):
+    known = lib.providers()
+    monkeypatch.setitem(known, "tiingo", replace(known["tiingo"], exchanges=frozenset({"US", "XSHG", "XSHE"})))
+    with lib.Store(settings.db_path) as store:
+        a = fetcher.assess(store, settings, "600519.SS", now=NOW)  # Shanghai: Tiingo carries it, Massive does not
+        assert a.symbol == "600519.SS" and a.asset == "stock" and a.feeds == ["tiingo"] and a.note == ""
+        assert {w["source"] for w in store.watchlist(ticker="600519.SS")} == {"tiingo"}
+        assert store.watchlist(ticker="600519.SS")[0]["exchange"] == "XSHG"
+        none = fetcher.assess(store, settings, "TSE:7203", now=NOW)  # Tokyo: no feed set up here
+        assert none.symbol == "7203.T" and none.feeds == [] and none.note == "no feed set up here carries XTKS listings"
+        assert store.watchlist(ticker="7203.T") == []
+
+
 def test_next_due_is_the_earliest_moment_a_feed_can_have_new_data(settings):
     profiles = {n: p for n, p in lib.feed_profiles(settings).items() if p.assets}
     due = fetcher.next_due(settings, profiles, NOW)
     assert due is not None and due > NOW  # on a Tuesday morning the next session's data is still to come
     assert fetcher.next_due(settings, {}, NOW) is None
+    # a feed's listings abroad count by their exchanges' days: Thanksgiving, 10:00 ET, the US closed, Tokyo trading
+    thanksgiving = datetime(2026, 11, 26, 15, 0, tzinfo=timezone.utc)
+    stocks = {n: replace(p, assets={"stock"}) for n, p in profiles.items() if "stock" in p.assets}  # (fx and crypto: always on)
+    us = fetcher.next_due(settings, stocks, thanksgiving)
+    abroad = fetcher.next_due(settings, stocks, thanksgiving, {"tiingo": {"XTKS"}})
+    assert us is not None and thanksgiving < abroad < us  # Tokyo's Thursday is due before the US Friday
 
 
 # -- requests --------------------------------------------------------------------------------

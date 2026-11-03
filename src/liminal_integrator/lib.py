@@ -10,6 +10,7 @@ from liminal_lib import host  # noqa: F401
 from liminal_lib.host import FETCHER, Host, attach_fetcher, feed_run, history_run  # noqa: F401
 from liminal_lib.host import wait_for_fetcher, wait_for_requests  # noqa: F401
 from liminal_lib.logs import Logger, log_to  # noqa: F401
+from liminal_lib.models import is_foreign  # noqa: F401
 from liminal_lib.proc import hold_until_interrupted  # noqa: F401
 from liminal_lib.sessions import ET  # noqa: F401
 from liminal_lib.sources import feed_closed, feed_profiles, providers, supports  # noqa: F401

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0 (2026-11-02)
+
+A symbol is assessed under its stored ticker however it is typed (`SPCX::NASDAQ`, `EUR/USD`, `TSE:7203`: the
+library's `resolve` first; before, the typed text was looked up and a request for `SPCX::NASDAQ` failed). Stocks
+listed outside the US (liminal-lib 1.2.0, plugin API 1.12): `7203.T`, `2330.TW`, `600519.SS` go to the feeds
+whose plugins carry their exchange, and a listing no feed here carries says so ("no feed set up here carries
+XTKS listings"); the standing pass's next due moment counts each feed's listings abroad by their exchanges' days
+(`next_due(..., exchanges=store.watch_exchanges())`). Requires liminal-lib 1.2.0.
+
 ## 1.1.2 (2026-11-02)
 
 The app is liminal-app (package `liminal_app`): the page and the front are imported from there, the extras pass

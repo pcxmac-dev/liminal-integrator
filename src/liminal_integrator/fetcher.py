@@ -72,9 +72,11 @@ def page_port() -> int | None:
         return PAGE_PORT
 
 
-def next_due(settings, profiles: dict, now: datetime) -> datetime | None:
+def next_due(settings, profiles: dict, now: datetime, exchanges: dict[str, set[str]] | None = None) -> datetime | None:
     """The earliest moment any feed set up here can have new data (freshness.expected, per feed
-    and asset class on its plan): the standing pass waits for it. None: not known."""
+    and asset class on its plan; a feed's stocks listed outside the US by their exchanges' days:
+    `exchanges` is {feed: {MIC}}, Store.watch_exchanges): the standing pass waits for it. None:
+    not known."""
     due = []
     for name, p in profiles.items():
         try:
@@ -82,9 +84,11 @@ def next_due(settings, profiles: dict, now: datetime) -> datetime | None:
         except Exception:  # noqa: BLE001 - a feed not set up here says nothing
             continue
         for asset in sorted(p.assets):
-            e = lib.freshness.expected(lib.freshness.hours(name, asset), tier, now)
-            if e.next_due is not None:
-                due.append(e.next_due)
+            abroad = sorted((exchanges or {}).get(name, ())) if asset == "stock" else []
+            for exchange in (None, *abroad):
+                e = lib.freshness.expected(lib.freshness.hours(name, asset), tier, now, exchange)
+                if e.next_due is not None:
+                    due.append(e.next_due)
     return min(due) if due else None
 
 
@@ -113,22 +117,25 @@ class Assessment:
 
 
 def assess(store, settings, symbol: str, kinds=("bars",), now: datetime | None = None) -> Assessment:
-    """Assess the work for `symbol` over the plugins set up here. A symbol nobody watches yet goes
-    on the watchlist of every feed that can collect it first; then each feed's offers for its asset
-    class (the standing scheme's), and the plan's jobs to the feeds holding it."""
-    symbol = symbol.strip().upper()
+    """Assess the work for `symbol` (as typed: SPCX::NASDAQ, EUR/USD, TSE:7203; the assessment is
+    under the stored ticker, SPCX, EURUSD, 7203.T) over the plugins set up here. A symbol nobody
+    watches yet goes on the watchlist of every feed that can collect it first; then each feed's
+    offers for its asset class (the standing scheme's), and the plan's jobs to the feeds holding it."""
+    spec = lib.resolve(symbol)
+    symbol = spec.ticker
     now = now or datetime.now(timezone.utc)
     today = now.astimezone(lib.ET).date()
     profiles = {n: p for n, p in lib.feed_profiles(settings).items() if p.assets}
     rows = store.watchlist(ticker=symbol)
     if not rows:
-        spec = lib.resolve(symbol)
         for name, p in profiles.items():
             if spec.asset in p.assets and lib.supports(name, spec):
                 store.watch_spec(name, spec)
         rows = store.watchlist(ticker=symbol)
     if not rows:
-        return Assessment(symbol, None, note="no feed set up here collects it")
+        abroad = spec.asset == "stock" and lib.is_foreign(spec.exchange)
+        return Assessment(symbol, None, note=f"no feed set up here carries {spec.exchange} listings" if abroad
+                          else "no feed set up here collects it")
     asset = rows[0]["asset"]
     # A retired symbol (no longer listed) is held too: the user, 2026-11-02: "if however, the retired
     # stock data is still available on any of the sources, complete the retired symbol". Its feeds'
@@ -447,7 +454,7 @@ class Fetcher:
             self.workers = threading.Thread(target=self._run_plugins, name="fetcher-plugins", daemon=True)
             self.workers.start()
         with self.lock:
-            self.next_due = next_due(s, {n: p for n, p in profiles.items() if p.assets}, now)
+            self.next_due = next_due(s, {n: p for n, p in profiles.items() if p.assets}, now, store.watch_exchanges())
         self.log(f"fetcher: pass: {', '.join(started) or 'no feed'} held"
                  + (f"; fetching already: {', '.join(going)}" if going else "")
                  + (f"; not set up here: {', '.join(unset)}" if unset else "")
