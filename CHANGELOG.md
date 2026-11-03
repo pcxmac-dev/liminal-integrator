@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.2 (2026-11-03)
+
+`liminal-integrator request` puts a symbol on the stack under its stored name (`twse:2330` as `2330.TW`, `eur/usd` as
+`EURUSD`), as the app's page does, so the stack shows one request however a symbol is typed.
+
 ## 1.2.1 (2026-11-03)
 
 An offline copy of the fetcher still assesses a request before failing it, so its page shows which feeds would be

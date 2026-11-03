@@ -324,6 +324,9 @@ def test_the_command_line(settings, monkeypatch, capsys):
     assert cli.main(["request"]) == 2  # which symbols?
     assert cli.main(["request", "aapl", "nq1!", "--kinds", "bars,live"]) == 1  # no fetcher answers: they wait on the stack
     out = capsys.readouterr().out
+    assert cli.main(["request", "twse:2330", "eur/usd"]) == 1 and "2330.TW" in capsys.readouterr().out  # under the stored names
+    with lib.Store(settings.db_path) as store:
+        assert {r["symbol"] for r in store.request_rows()} >= {"AAPL", "NQ1!", "2330.TW", "EURUSD"}
     assert "#1 AAPL: waiting (bars,live)" in out and "#2 NQ1!: waiting" in out and "wait on its stack" in out
     assert cli.main(["cancel", "--id", "1"]) == 0 and cli.main(["cancel", "--id", "1"]) == 1
     assert cli.main(["fetcher", "status", "--limit", "5"]) == 0

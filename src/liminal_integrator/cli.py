@@ -43,7 +43,7 @@ def cmd_fetcher(args, settings) -> int:
             print("request: which symbols?")
             return 2
         with lib.Store(settings.db_path) as store:
-            rows = [store.request_put(t, kinds=args.kinds.split(","), by="cli") for t in args.symbols]
+            rows = [store.request_put(stored_ticker(t), kinds=args.kinds.split(","), by="cli") for t in args.symbols]
         for r in rows:
             print(f"#{r['id']} {r['symbol']}: {r['state']} ({','.join(r['kinds'])})")
         held = lib.attach_fetcher(settings.db_path, log)
@@ -128,6 +128,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 ACTIONS = ("serve", "status", "request", "pass", "cancel", "host")
+
+
+def stored_ticker(symbol: str) -> str:
+    """The name a symbol is stored under, from the text typed (TSE:7203: 7203.T; EUR/USD: EURUSD),
+    or the text itself when the library cannot read it (the fetcher then says why)."""
+    try:
+        return lib.resolve(symbol).ticker
+    except ValueError:
+        return symbol.strip().upper()
 
 
 def main(argv: list[str] | None = None) -> int:
