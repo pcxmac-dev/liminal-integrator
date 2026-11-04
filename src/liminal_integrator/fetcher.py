@@ -28,6 +28,14 @@ Its work (Fetcher.run), between ticks of TICK_SECONDS while it is up:
   process of their own, and the plugins that fetch on their own through their queue (runner);
 - its status in the main file (storage.requests.STATUS_KEY), for every page, and over its pipe
   (`handle`).
+
+The plugins it loads are every plugin found, or the ones it is told (`--plugins twse,tiingo`, or
+`none`: liminal_lib.sources.registry's selection, LIMINAL_PLUGINS_LOADED, inherited by every process
+it starts); its status says which were loaded and which left out. An integrator of its own
+(`--name`, LIMINAL_INTEGRATOR_NAME: the user, 2026-11-03, "multiple integrators can address
+databases") runs on its own database (store/data/<name>/liminal.db unless `--db`) with its own page
+port and plugins, beside the one and only; the host `fetcher` is one per database, so each database
+has one fetcher, and the machine's ledgers (a key's uses) are shared by key, whichever spends them.
 """
 from __future__ import annotations
 
@@ -49,6 +57,7 @@ KINDS = lib.KINDS  # what a request can ask about a symbol today (the contract's
 TICK_SECONDS = 2.0  # the loop looks at its requests and runs this often
 PASS_HOURS = 1.0  # the standing pass, at most this often (LIMINAL_SYNC_HOURS)
 PAGE_PORT = 8785  # its page and data API (LIMINAL_FETCHER_PORT; 0: a free one; none: no page)
+NAME_VAR = "LIMINAL_INTEGRATOR_NAME"  # this integrator's name when it is not the only one (an instance of its own)
 SERVE_TIMEOUT_S = 6 * 3600  # a request whose feeds have not served it by then has failed
 STATUS_EVERY_S = 30.0  # the status written at least this often while something goes on
 Log = Callable[[str], None]
@@ -70,6 +79,43 @@ def page_port() -> int | None:
         return int(raw) if raw else PAGE_PORT
     except ValueError:
         return PAGE_PORT
+
+
+def instance_name() -> str:
+    """This integrator's name (LIMINAL_INTEGRATOR_NAME): "" for the one and only, else the name it was
+    installed or served under (`--name`), on a database of its own."""
+    return (lib.config.setting(NAME_VAR) or "").strip()
+
+
+def check_name(name: str) -> str:
+    """A name an integrator can be installed under: letters, digits, `-` and `_` (up to 40, the first
+    a letter or digit): a task's or a unit's name, a folder's. ValueError otherwise."""
+    if not name or len(name) > 40 or not name[0].isalnum() or not all(c.isalnum() or c in "-_" for c in name):
+        raise ValueError(f"an integrator's name is letters, digits, - and _ (up to 40), not {name!r}")
+    return name
+
+
+def instance_db(name: str) -> Path:
+    """The database an integrator named `name` runs on unless told another (`--db`): a folder of its
+    own in the data folder (store/data/<name>/liminal.db), its feeds' files beside it."""
+    return lib.layout.data_dir() / check_name(name) / lib.layout.MAIN
+
+
+def plugins_state() -> dict:
+    """The plugins this process loaded (lib.plugins_loaded) and the selection that applied
+    (lib.selection: `--plugins`, LIMINAL_PLUGINS_LOADED): all, the names, or none."""
+    chosen = lib.selection()
+    return {"selection": chosen.text, "loaded": lib.plugins_loaded(), "leftOut": list(chosen.left_out),
+            "unknown": list(chosen.unknown)}
+
+
+def plugins_line(state: dict) -> str:
+    """One line on the plugins loaded, for the log, the status and the page."""
+    loaded = ", ".join(state.get("loaded") or []) or "none"
+    asked = state.get("selection") or "all"
+    return (f"plugins loaded: {loaded}" + (f" ({asked} asked for)" if asked != "all" else "")
+            + (f"; left out: {', '.join(state['leftOut'])}" if state.get("leftOut") else "")
+            + (f"; unknown: {', '.join(state['unknown'])}" if state.get("unknown") else ""))
 
 
 def next_due(settings, profiles: dict, now: datetime, exchanges: dict[str, set[str]] | None = None) -> datetime | None:
@@ -257,7 +303,7 @@ class Fetcher:
         with self.lock:
             feeds = {n: a for n, a in self.feeds.items() if a is not None}
             return {
-                "pid": os.getpid(), "page": self.page_url,
+                "pid": os.getpid(), "page": self.page_url, "name": instance_name(), "plugins": plugins_state(),
                 "busy": bool(self.active or feeds or self.pass_asked or (self.history is not None and self._alive(self.history))),
                 "active": [{"id": i, "symbol": a["symbol"], "feeds": a["feeds"], "detail": a.get("detail")}
                            for i, a in self.active.items()],
@@ -278,6 +324,8 @@ class Fetcher:
             self.stop = stop
         store = lib.Store(self.db_path, check_same_thread=False)
         try:
+            name = instance_name()
+            self.log(f"fetcher{' ' + name if name else ''}: {plugins_line(plugins_state())}")
             n = store.request_reset()
             if n:
                 self.log(f"fetcher: {n} request(s) left by the fetcher before: waiting again")

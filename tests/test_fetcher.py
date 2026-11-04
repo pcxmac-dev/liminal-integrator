@@ -250,6 +250,8 @@ def test_the_standing_pass_holds_every_feed_and_waits_for_new_data(settings, mon
     assert f.pass_asked and f.wake.is_set()
     st = f.status()
     assert st["passFeeds"] == sorted(runs) and st["history"] is True and st["busy"] and st["passHours"] == 0.0
+    assert st["name"] == "" and st["plugins"]["selection"] == "all" and "massive" in st["plugins"]["loaded"]
+    assert st["plugins"]["leftOut"] == [] and st["plugins"]["unknown"] == []
     f.tick(store, NOW + timedelta(seconds=1))  # the pass asked for: the runs held already go on, held
     assert not f.pass_asked and not runs["massive"].detached
     f.let_go()
@@ -342,3 +344,39 @@ def test_the_command_line(settings, monkeypatch, capsys):
     assert cli.main(["host"]) == 0 and seen == [settings]
     args = cli.build_parser().parse_args(["service"])
     assert args.action == "status"
+
+
+def test_the_fetcher_loads_select_plugins_or_none(settings, runs, monkeypatch):
+    """The user, 2026-11-03: "the default case is to load all plugins, however the integrator can be
+    loaded with select plugins or none". `--plugins` (lib.select, LIMINAL_PLUGINS_LOADED) names the
+    plugins loaded, each with its parts, or none; the status and the log say which were loaded and
+    which left out; the standing pass holds the runs of the ones loaded alone."""
+    chosen = lib.select("tiingo,nobody")
+    assert "tiingo" in lib.providers() and "massive" not in lib.providers() and chosen.unknown == ("nobody",)
+    assert "massive" in chosen.left_out and lib.plugins_loaded() == ["tiingo"]
+    f, log = _fetcher(settings, monkeypatch)
+    st = f.status()
+    assert st["plugins"] == {"selection": "tiingo,nobody", "loaded": ["tiingo"], "leftOut": list(chosen.left_out), "unknown": ["nobody"]}
+    with lib.Store(settings.db_path) as store:
+        out = f.standing_pass(store, NOW)
+        assert out["started"] == ["tiingo", "tiingofx"] and "massive" not in out["unset"]  # its part with it; massive not loaded: not even "not set up here"
+        lib.select("none")
+        assert lib.providers() == {} and lib.plugins_loaded() == [] and f.status()["plugins"]["selection"] == "none"
+        assert f.standing_pass(store, NOW)["started"] == []
+        store.request_put("SPCX", kinds=["bars"], by="test")
+        f.take_requests(store, NOW)
+        row = store.request_rows(limit=1)[0]
+        assert row["state"] == "failed" and f.active == {}  # no plugin loaded: nothing can collect it
+        f.run(stop=_stopped())
+    assert any("plugins loaded: none (none asked for)" in m for m in log)
+    hosted: list = []
+    monkeypatch.setattr(fetcher, "run_host", lambda settings, log=None, port=None, rescan=None: hosted.append(lib.selection().text))
+    monkeypatch.setattr(lib.config, "load_settings", lambda *a, **kw: settings)
+    assert cli.main(["host", "--plugins", "tiingo"]) == 0 and hosted == ["tiingo"] and "tiingo" in lib.providers()
+    assert lib.select(None).everything and "massive" in lib.providers()
+
+
+def _stopped():
+    stop = threading.Event()
+    stop.set()
+    return stop

@@ -5,7 +5,7 @@ that keeps that page at its port (front()). A library piece the integrator needs
 liminal-lib, never written here twice."""
 from __future__ import annotations
 
-from liminal_lib import collector, config, freshness, proc, runner, sourcing  # noqa: F401
+from liminal_lib import collector, config, freshness, layout, proc, runner, sourcing  # noqa: F401
 from liminal_lib import host  # noqa: F401
 from liminal_lib.host import FETCHER, Host, attach_fetcher, feed_run, history_run  # noqa: F401
 from liminal_lib.host import wait_for_fetcher, wait_for_requests  # noqa: F401
@@ -14,7 +14,7 @@ from liminal_lib.models import is_foreign  # noqa: F401
 from liminal_lib.proc import hold_until_interrupted  # noqa: F401
 from liminal_lib.sessions import ET  # noqa: F401
 from liminal_lib.sources import feed_closed, feed_profiles, providers, supports  # noqa: F401
-from liminal_lib.sources.registry import plugin_fetchers  # noqa: F401
+from liminal_lib.sources.registry import SELECTION_VAR, plugin_fetchers, plugins_loaded, select, selection  # noqa: F401
 from liminal_lib.storage import Store  # noqa: F401
 from liminal_lib.storage.requests import KINDS, OPEN, STATUS_KEY, read_status, write_status  # noqa: F401
 from liminal_lib.stores import history_due  # noqa: F401

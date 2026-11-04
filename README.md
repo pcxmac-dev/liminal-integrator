@@ -16,6 +16,11 @@ its pages to it; the library both build on is [liminal-lib](https://github.com/p
   in touch, started when one comes and let go once none has been for a while.
 - A daemon when you want one (`--daemon`, on `serve` or `service install`): the fetcher held for good
   and started again if it ends, so it collects what it can on its own.
+- Every plugin found, or the ones you name (`--plugins twse,tiingo`; `--plugins none` for none at all):
+  its status says which were loaded and which left out.
+- Integrators of their own beside the one and only (`--name paper`): each on its own database
+  (`store/data/paper/liminal.db` unless `--db`), with its own page port (`--port`) and plugins, as a
+  task or unit of its own (`LiminalIntegrator-paper`).
 
 ```
 liminal-integrator serve                 # its page in the browser; the fetcher while a page is in touch (Ctrl+C stops)
@@ -25,6 +30,9 @@ liminal-integrator request AAPL NQ1!     # ask for symbols (--kinds bars,live; -
 liminal-integrator pass                  # a standing pass now
 liminal-integrator host                  # one fetcher here, in the foreground, nothing holding it
 liminal-integrator service install       # its page from your logon (--daemon: the fetcher held; remove, status, run)
+liminal-integrator serve --plugins twse,tiingo             # these plugins alone (none: no plugin at all)
+liminal-integrator service install --name paper --port 8786 --plugins none   # an integrator of its own: its database, page, task
+liminal-integrator service status --name paper             # ask after it (remove --name paper takes it away)
 ```
 
 The app's own command line answers the same: `liminal fetcher ...`, `liminal service ...`.

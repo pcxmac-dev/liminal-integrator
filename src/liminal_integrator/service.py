@@ -22,6 +22,11 @@ between passes it holds no store and no plugin's run.
   lingering (`loginctl enable-linger`) it runs without a login. A user unit does not inherit your
   shell's variables: the keys need a home it can read at boot (your choice: the OS keyring,
   systemd's encrypted credentials), never a file this program writes.
+
+An integrator of its own (`--name`, the user, 2026-11-03: "multiple integrators can address
+databases"): its task LiminalIntegrator-<name> (its unit liminal-integrator-<name>), running
+`service run --name <name> --db <its database> [--port N] [--plugins ...]`: its own database, page
+port and plugins, installed, removed and asked beside the one and only.
 """
 from __future__ import annotations
 
@@ -49,10 +54,31 @@ def python_quiet() -> Path:
     return quiet if os.name == "nt" and quiet.exists() else exe
 
 
-def command(daemon: bool = False) -> list[str]:
-    """What the installed service runs: `liminal-integrator service run`, `--daemon` for the
-    fetcher held for good."""
-    return [str(python_quiet()), "-m", "liminal_integrator", "service", "run", *(["--daemon"] if daemon else [])]
+def task_name(name: str = "") -> str:
+    """The task's name: LiminalIntegrator, or LiminalIntegrator-<name> for an integrator of its own."""
+    return f"{TASK_NAME}-{name}" if name else TASK_NAME
+
+
+def unit_name(name: str = "") -> str:
+    """The unit's name: liminal-integrator, or liminal-integrator-<name>."""
+    return f"{UNIT_NAME}-{name}" if name else UNIT_NAME
+
+
+def command(daemon: bool = False, name: str = "", db_path: Path | None = None, port: int | None = None,
+            plugins: str | None = None) -> list[str]:
+    """What the installed service runs: `liminal-integrator service run`, with `--name` and `--db`
+    for an integrator of its own (its database named outright), `--port` and `--plugins` when
+    given, `--daemon` for the fetcher held for good."""
+    out = [str(python_quiet()), "-m", "liminal_integrator", "service", "run"]
+    if name:
+        out += ["--name", name]
+    if db_path is not None:
+        out += ["--db", str(db_path)]
+    if port is not None:
+        out += ["--port", str(port)]
+    if plugins is not None:
+        out += ["--plugins", plugins]
+    return out + (["--daemon"] if daemon else [])
 
 
 def page_url(port: int | None = None) -> str | None:
@@ -64,8 +90,9 @@ def page_url(port: int | None = None) -> str | None:
     return f"http://127.0.0.1:{port}/" if port else "a free port (logs/liminal.log says which)"
 
 
-def _does(daemon: bool) -> str:
-    page = f"its page at {page_url()}" if page_url() else "no page (LIMINAL_FETCHER_PORT is off)"
+def _does(daemon: bool, port: int | None = None) -> str:
+    url = page_url(port)
+    page = f"its page at {url}" if url else "no page (LIMINAL_FETCHER_PORT is off)"
     return page + (", the fetcher held for good (the daemon: it collects what it can on its own)" if daemon
                    else ", the fetcher while a page is in touch")
 
@@ -76,49 +103,54 @@ def _ps(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
-def task_script(action: str, daemon: bool = False) -> str:
-    """The PowerShell (the Task Scheduler cmdlets) for install, remove, status or start."""
+def task_script(action: str, daemon: bool = False, name: str = "", db_path: Path | None = None, port: int | None = None,
+                plugins: str | None = None) -> str:
+    """The PowerShell (the Task Scheduler cmdlets) for install, remove, status or start; the task
+    named for the integrator (task_name)."""
+    task = _ps(task_name(name))
     if action == "install":
-        exe, *args = command(daemon)
+        exe, *args = command(daemon, name, db_path, port, plugins)
         return (f"$a = New-ScheduledTaskAction -Execute {_ps(exe)} -Argument {_ps(' '.join(args))}; "
                 "$t = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\\$env:USERNAME\"; "
                 "$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew "
                 "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
-                f"Register-ScheduledTask -TaskName {_ps(TASK_NAME)} -Action $a -Trigger $t -Settings $s -Force | Out-Null")
+                f"Register-ScheduledTask -TaskName {task} -Action $a -Trigger $t -Settings $s -Force | Out-Null")
     if action == "remove":
-        return f"Unregister-ScheduledTask -TaskName {_ps(TASK_NAME)} -Confirm:$false"
+        return f"Unregister-ScheduledTask -TaskName {task} -Confirm:$false"
     if action == "start":
-        return f"Start-ScheduledTask -TaskName {_ps(TASK_NAME)}"
-    return (f"Get-ScheduledTask -TaskName {_ps(TASK_NAME)} | Format-List TaskName, State, "
+        return f"Start-ScheduledTask -TaskName {task}"
+    return (f"Get-ScheduledTask -TaskName {task} | Format-List TaskName, State, "
             "@{n='Command';e={$_.Actions[0].Execute + ' ' + $_.Actions[0].Arguments}}; "
-            f"Get-ScheduledTaskInfo -TaskName {_ps(TASK_NAME)} | Format-List LastRunTime, LastTaskResult, NextRunTime")
+            f"Get-ScheduledTaskInfo -TaskName {task} | Format-List LastRunTime, LastTaskResult, NextRunTime")
 
 
-def task_args(action: str, daemon: bool = False) -> list[str]:
+def task_args(action: str, daemon: bool = False, name: str = "", db_path: Path | None = None, port: int | None = None,
+              plugins: str | None = None) -> list[str]:
     """The command line for install, remove, status or start: PowerShell running task_script,
     failing (exit 1) when a cmdlet does."""
-    script = ("$ErrorActionPreference = 'Stop'; try { " + task_script(action, daemon)
+    script = ("$ErrorActionPreference = 'Stop'; try { " + task_script(action, daemon, name, db_path, port, plugins)
               + " } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }")
     return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]
 
 
 # -- Linux: a systemd user unit ------------------------------------------------------------------
-def unit_path() -> Path:
-    return Path.home() / ".config" / "systemd" / "user" / f"{UNIT_NAME}.service"
+def unit_path(name: str = "") -> Path:
+    return Path.home() / ".config" / "systemd" / "user" / f"{unit_name(name)}.service"
 
 
-def unit_text(db_path: Path | None = None, daemon: bool = False) -> str:
-    """The unit: `liminal-integrator service run`, started again on failure, with the database's
-    path (no key: those are yours to give the unit)."""
+def unit_text(db_path: Path | None = None, daemon: bool = False, name: str = "", port: int | None = None,
+              plugins: str | None = None) -> str:
+    """The unit: `liminal-integrator service run` (with the integrator's name, port and plugins),
+    started again on failure, with the database's path (no key: those are yours to give the unit)."""
     env = f"Environment=LIMINAL_DB={db_path}\n" if db_path else ""
     what = ("the fetcher held for good, collecting what it can on its own, and its page" if daemon
             else "the fetcher's page, and the fetcher while a page is in touch")
     return (
         "[Unit]\n"
-        f"Description=Liminal integrator: {what}\n"
+        f"Description=Liminal integrator{' ' + name if name else ''}: {what}\n"
         "After=network-online.target\n\n"
         "[Service]\n"
-        f"ExecStart={' '.join(command(daemon))}\n"
+        f"ExecStart={' '.join(command(daemon, name, None, port, plugins))}\n"
         f"{env}"
         "Restart=on-failure\n"
         f"RestartSec={RESTART_SECONDS:g}\n"
@@ -133,76 +165,87 @@ def _call(args: list[str]) -> int:
 
 
 class LogonTask:
-    """Windows: the scheduled task at your logon (TASK_NAME), registered, removed and asked through
+    """Windows: the scheduled task at your logon (task_name: LiminalIntegrator, or
+    LiminalIntegrator-<name> for an integrator of its own), registered, removed and asked through
     the Task Scheduler cmdlets (task_script, task_args)."""
 
-    def __init__(self, daemon: bool = False):
-        self.daemon = daemon
+    def __init__(self, daemon: bool = False, name: str = "", db_path: Path | None = None, port: int | None = None,
+                 plugins: str | None = None):
+        self.daemon, self.name, self.db_path, self.port, self.plugins = daemon, name, db_path, port, plugins
 
     def install(self, log: Log) -> int:
-        runs = f"`liminal-integrator service run{' --daemon' if self.daemon else ''}`"
-        code = _call(task_args("install", self.daemon))
+        task = task_name(self.name)
+        runs = "`liminal-integrator " + " ".join(command(self.daemon, self.name, self.db_path, self.port, self.plugins)[3:]) + "`"
+        code = _call(task_args("install", self.daemon, self.name, self.db_path, self.port, self.plugins))
         if code == 0:
-            _call(task_args("start"))
-            log(f"service: the task {TASK_NAME} runs {runs} at your logon, as you (your user environment variables, "
-                f"the keys among them, are its); started now: {_does(self.daemon)}. `service remove` takes it away.")
+            _call(task_args("start", name=self.name))
+            log(f"service: the task {task} runs {runs} at your logon, as you (your user environment variables, "
+                f"the keys among them, are its); started now: {_does(self.daemon, self.port)}. `service remove"
+                f"{' --name ' + self.name if self.name else ''}` takes it away.")
         else:
-            log(f"service: the task {TASK_NAME} could not be registered (the Task Scheduler's answer is above)")
+            log(f"service: the task {task} could not be registered (the Task Scheduler's answer is above)")
         return code
 
     def remove(self, log: Log) -> int:
-        return _call(task_args("remove"))
+        return _call(task_args("remove", name=self.name))
 
     def status(self, log: Log) -> int:
-        return _call(task_args("status"))
+        return _call(task_args("status", name=self.name))
 
 
 class UserUnit:
-    """Linux: the systemd user unit (UNIT_NAME, unit_path), written with the database's path
+    """Linux: the systemd user unit (unit_name, unit_path), written with the database's path
     (unit_text), enabled and started; removed with its file."""
 
-    def __init__(self, db_path: Path | None = None, daemon: bool = False):
-        self.db_path, self.daemon = db_path, daemon
+    def __init__(self, db_path: Path | None = None, daemon: bool = False, name: str = "", port: int | None = None,
+                 plugins: str | None = None):
+        self.db_path, self.daemon, self.name, self.port, self.plugins = db_path, daemon, name, port, plugins
 
     def install(self, log: Log) -> int:
-        path = unit_path()
+        path = unit_path(self.name)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(unit_text(self.db_path, self.daemon), encoding="utf-8")
-        code = _call(["systemctl", "--user", "daemon-reload"]) or _call(["systemctl", "--user", "enable", "--now", UNIT_NAME])
-        log(f"service: the unit {path} is enabled and started: {_does(self.daemon)}. To run it without a login: "
-            f"`loginctl enable-linger {os.environ.get('USER', '')}`. The unit does not see your shell's variables: give "
-            "it the keys through the OS keyring or systemd's encrypted credentials (your choice), never a file this "
+        path.write_text(unit_text(self.db_path, self.daemon, self.name, self.port, self.plugins), encoding="utf-8")
+        code = (_call(["systemctl", "--user", "daemon-reload"])
+                or _call(["systemctl", "--user", "enable", "--now", unit_name(self.name)]))
+        log(f"service: the unit {path} is enabled and started: {_does(self.daemon, self.port)}. To run it without a "
+            f"login: `loginctl enable-linger {os.environ.get('USER', '')}`. The unit does not see your shell's variables: "
+            "give it the keys through the OS keyring or systemd's encrypted credentials (your choice), never a file this "
             "program writes.")
         return code
 
     def remove(self, log: Log) -> int:
-        code = _call(["systemctl", "--user", "disable", "--now", UNIT_NAME])
-        path = unit_path()
+        code = _call(["systemctl", "--user", "disable", "--now", unit_name(self.name)])
+        path = unit_path(self.name)
         if path.exists():
             path.unlink()
         _call(["systemctl", "--user", "daemon-reload"])
         return code
 
     def status(self, log: Log) -> int:
-        return _call(["systemctl", "--user", "status", UNIT_NAME, "--no-pager"])
+        return _call(["systemctl", "--user", "status", unit_name(self.name), "--no-pager"])
 
 
 class Service:
     """The integrator's service: installed at your logon on this platform (LogonTask on Windows, a
     UserUnit on Linux; `installer`), removed, asked for its status, or run here (`run`: its page,
-    and the fetcher while a page is in touch, or held for good as the daemon). The module's
-    functions of the same names are these, for the command line."""
+    and the fetcher while a page is in touch, or held for good as the daemon). An integrator of
+    its own has a `name` (its task or unit named for it), `port` and `plugins` baked into what the
+    service runs, and its database named outright (`db_path`: the one given, else the settings').
+    The module's functions of the same names are these, for the command line."""
 
-    def __init__(self, settings, log: Log = print, daemon: bool = False):
+    def __init__(self, settings, log: Log = print, daemon: bool = False, name: str = "", port: int | None = None,
+                 plugins: str | None = None, db_path: Path | None = None):
         self.settings, self.log, self.daemon = settings, log, daemon
+        self.name, self.port, self.plugins = name, port, plugins
+        self.db_path = db_path if db_path is not None else settings.db_path if name else None  # baked when named
 
     @property
     def installer(self) -> "LogonTask | UserUnit | None":
         """What installs it on this platform; None where nothing can (sys.platform, when asked)."""
         if sys.platform == "win32":
-            return LogonTask(self.daemon)
+            return LogonTask(self.daemon, self.name, self.db_path, self.port, self.plugins)
         if sys.platform.startswith("linux"):
-            return UserUnit(self.settings.db_path, self.daemon)
+            return UserUnit(self.settings.db_path, self.daemon, self.name, self.port, self.plugins)
         return None
 
     def install(self) -> int:
@@ -236,6 +279,9 @@ class Service:
         process is told to stop (SIGINT, SIGTERM, Ctrl+C: the page down, the fetcher let go)."""
         settings, log, daemon = self.settings, self.log, self.daemon
         stop = stop or threading.Event()
+        port = self.port if port is None else port
+        if self.name:
+            log(f"service: the integrator {self.name}, on {settings.db_path}")
 
         def ending(signum, frame) -> None:
             stop.set()
@@ -282,19 +328,21 @@ class Service:
 
 
 # -- the command line's: each a Service's --------------------------------------------------------
-def install(settings, log: Log = print, daemon: bool = False) -> int:
-    return Service(settings, log, daemon).install()
+def install(settings, log: Log = print, daemon: bool = False, name: str = "", port: int | None = None,
+            plugins: str | None = None, db_path: Path | None = None) -> int:
+    return Service(settings, log, daemon, name, port, plugins, db_path).install()
 
 
-def remove(settings, log: Log = print) -> int:
-    return Service(settings, log).remove()
+def remove(settings, log: Log = print, name: str = "") -> int:
+    return Service(settings, log, name=name).remove()
 
 
-def status(settings, log: Log = print) -> int:
-    return Service(settings, log).status()
+def status(settings, log: Log = print, name: str = "") -> int:
+    return Service(settings, log, name=name).status()
 
 
 def run(settings, log: Log = print, stop: threading.Event | None = None, open_browser: bool = False,
         port: int | None = None, daemon: bool = False) -> int:
-    """The service's process here (Service.run): `serve`, `service run`."""
-    return Service(settings, log, daemon).run(stop, open_browser, port)
+    """The service's process here (Service.run): `serve`, `service run` (its name, database and
+    plugins applied to the process already: cli.apply_instance)."""
+    return Service(settings, log, daemon, fetcher.instance_name()).run(stop, open_browser, port)

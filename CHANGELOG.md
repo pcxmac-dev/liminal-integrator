@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.0 (2026-11-03)
+
+The plugins an integrator loads, and integrators of their own (the user, 2026-11-03: "the default case
+is to load all plugins, however the integrator can be loaded with select plugins or none"; "multiple
+integrators can address databases"). `--plugins twse,tiingo` or `--plugins none` on `serve`, `host`,
+`service install` and `service run` (liminal-lib 1.3.1's selection, LIMINAL_PLUGINS_LOADED, inherited by
+every process the integrator starts; every plugin found without it); the fetcher's status and log say
+which plugins were loaded, which left out and which names nobody answered to (`fetcher status`, the
+Fetcher view). `--name NAME` installs or serves an integrator of its own: on its own database
+(`store/data/NAME/liminal.db` unless `--db`), its own page port (`--port`, on the service too) and
+plugins, as the task `LiminalIntegrator-NAME` (the unit `liminal-integrator-NAME`), its name
+(LIMINAL_INTEGRATOR_NAME) in its status; `service status|remove --name NAME` ask after it. The host
+`fetcher` stays one per database, the machine's ledgers shared by key. `cli.apply_instance` applies
+the three to the process before its settings load (the app's `liminal fetcher|service ...` does the
+same); `service.Service(settings, log, daemon, name, port, plugins, db_path)`, `task_name`, `unit_name`,
+`command(daemon, name, db_path, port, plugins)`.
+
 ## 1.3.0 (2026-11-03)
 
 On liminal-lib 1.3.0 (the class contract, plugin API 2.0: a plugin's capability scan asked for with

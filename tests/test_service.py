@@ -5,13 +5,16 @@ run autonomously in a 'daemon' mode") the fetcher held for good and started agai
 the fetcher stand in as fakes."""
 from __future__ import annotations
 
+import os
 import threading
 import time
 from argparse import Namespace
 from dataclasses import replace
 from pathlib import Path
 
-from liminal_integrator import cli, lib, service
+import pytest
+
+from liminal_integrator import cli, fetcher, lib, service
 
 
 class FakeAttachment:
@@ -155,7 +158,7 @@ def test_the_windows_task_and_the_systemd_unit(tmp_path, monkeypatch):
     assert service.install(settings, lines.append) == 1 and "could not be registered" in lines[-1]
     monkeypatch.setattr(service, "_call", lambda args: calls.append(args) or 0)
     monkeypatch.setattr(service.sys, "platform", "linux")
-    monkeypatch.setattr(service, "unit_path", lambda: tmp_path / "user" / "liminal-integrator.service")
+    monkeypatch.setattr(service, "unit_path", lambda name="": tmp_path / "user" / "liminal-integrator.service")
     calls.clear()
     assert service.install(settings, lines.append) == 0
     assert (tmp_path / "user" / "liminal-integrator.service").read_text(encoding="utf-8") == unit
@@ -199,3 +202,76 @@ def test_serve_runs_the_service_here_with_its_page_in_the_browser(tmp_path, monk
     monkeypatch.setattr(cli.fetcher, "run_host", lambda settings, log=None, port=None, rescan=None: hosted.append(port))
     assert cli.main(["host", "--port", "8792"]) == 0 and hosted == [8792]
     assert cli.main(["host"]) == 0 and hosted == [8792, None]  # the port of its own (page_port)
+
+
+def test_an_integrator_of_its_own_has_its_name_database_port_and_plugins(tmp_path, monkeypatch):
+    """The user, 2026-11-03: "multiple integrators can address databases". `--name` installs or serves
+    an integrator of its own: the task LiminalIntegrator-NAME (the unit liminal-integrator-NAME) running
+    `service run --name NAME --db ...` with its port and plugins baked in; its database store/data/NAME/
+    unless --db; every process it starts inherits its name, database and plugins (LIMINAL_INTEGRATOR_NAME,
+    LIMINAL_DB, LIMINAL_PLUGINS_LOADED: cli.apply_instance)."""
+    settings = _settings(tmp_path)
+    db = tmp_path / "paper" / "liminal.db"
+    cmd = service.command(daemon=True, name="paper", db_path=db, port=8786, plugins="twse,tiingo")
+    assert cmd[1:] == ["-m", "liminal_integrator", "service", "run", "--name", "paper", "--db", str(db), "--port", "8786",
+                       "--plugins", "twse,tiingo", "--daemon"]
+    assert service.command()[1:] == ["-m", "liminal_integrator", "service", "run"]  # the one and only, as before
+    assert service.task_name("paper") == "LiminalIntegrator-paper" and service.task_name() == "LiminalIntegrator"
+    script = service.task_args("install", name="paper", db_path=db, port=8786, plugins="none")[-1]
+    assert "-TaskName 'LiminalIntegrator-paper'" in script and f"--name paper --db {db} --port 8786 --plugins none'" in script
+    assert "-TaskName 'LiminalIntegrator-paper'" in service.task_args("remove", name="paper")[-1]
+    assert "-TaskName 'LiminalIntegrator'" in service.task_args("status")[-1]
+    assert service.unit_path("paper").name == "liminal-integrator-paper.service" and service.unit_path().name == "liminal-integrator.service"
+    unit = service.unit_text(db, daemon=False, name="paper", port=8786, plugins="twse")
+    assert f"Environment=LIMINAL_DB={db}" in unit and "service run --name paper --port 8786 --plugins twse\n" in unit
+    assert "Description=Liminal integrator paper:" in unit
+    # installed as one of its own: the task named for it, its database named outright, its page at its port
+    calls: list[list[str]] = []
+    monkeypatch.setattr(service, "_call", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(service.sys, "platform", "win32")
+    monkeypatch.setenv("LIMINAL_FETCHER_PORT", "8785")
+    lines: list[str] = []
+    assert service.install(settings, lines.append, name="paper", port=8786, plugins="twse", db_path=db) == 0
+    assert "'LiminalIntegrator-paper'" in calls[0][-1] and f"--db {db} --port 8786 --plugins twse'" in calls[0][-1]
+    assert "Start-ScheduledTask -TaskName 'LiminalIntegrator-paper'" in calls[1][-1]
+    assert "the task LiminalIntegrator-paper runs `liminal-integrator service run --name paper" in lines[-1]
+    assert "its page at http://127.0.0.1:8786/" in lines[-1] and "`service remove --name paper`" in lines[-1]
+    assert service.install(settings, lines.append, name="paper") == 0  # no --db: the settings' database, named outright
+    assert f"--name paper --db {settings.db_path}'" in calls[-2][-1]
+    assert service.remove(settings, lines.append, name="paper") == 0 and "'LiminalIntegrator-paper'" in calls[-1][-1]
+    assert service.status(settings, lines.append, name="paper") == 0 and "'LiminalIntegrator-paper'" in calls[-1][-1]
+    monkeypatch.setattr(service.sys, "platform", "linux")
+    monkeypatch.setattr(service, "unit_path", lambda name="": tmp_path / "user" / f"{service.unit_name(name)}.service")
+    assert service.install(settings, lines.append, name="paper", port=8786) == 0
+    assert "--name paper --port 8786\n" in (tmp_path / "user" / "liminal-integrator-paper.service").read_text(encoding="utf-8")
+    assert calls[-1] == ["systemctl", "--user", "enable", "--now", "liminal-integrator-paper"]
+    # the name is a task's, a unit's and a folder's
+    for bad in ("", "a b", "x/y", "-x", "n" * 41):
+        with pytest.raises(ValueError):
+            fetcher.check_name(bad)
+    assert fetcher.check_name("paper-2_b") == "paper-2_b"
+    assert fetcher.instance_db("paper") == lib.layout.data_dir() / "paper" / "liminal.db"
+    # the command line applies them to this process, and so to the ones it starts
+    for var in (fetcher.NAME_VAR, "LIMINAL_DB", lib.SELECTION_VAR):
+        monkeypatch.setenv(var, "")  # restored (deleted) after
+    monkeypatch.setattr(lib.config, "load_settings", lambda *a, **kw: replace(settings, db_path=Path(os.environ["LIMINAL_DB"])))
+    ran: list = []
+    monkeypatch.setattr(service, "run", lambda s, log, stop=None, open_browser=False, port=None, daemon=False:
+                        ran.append((s.db_path, port, daemon)) or 0)
+    assert cli.main(["serve", "--name", "paper", "--port", "8786", "--plugins", "none", "--no-browser"]) == 0
+    assert os.environ[fetcher.NAME_VAR] == "paper" and fetcher.instance_name() == "paper"
+    assert os.environ["LIMINAL_DB"] == str(lib.layout.data_dir() / "paper" / "liminal.db") == str(ran[-1][0])
+    assert ran[-1][1:] == (8786, False) and os.environ[lib.SELECTION_VAR] == "none" and lib.providers() == {}
+    assert cli.main(["serve", "--name", "x y"]) == 2  # not a name
+    assert cli.main(["serve", "--name", "paper", "--db", str(db), "--plugins", "all", "--no-browser"]) == 0
+    assert os.environ["LIMINAL_DB"] == str(db) and lib.SELECTION_VAR not in os.environ and lib.providers()
+    seen: list = []
+    monkeypatch.setattr(service, "install", lambda s, log, **kw: seen.append(kw) or 0)
+    assert cli.main(["service", "install", "--name", "paper", "--port", "8786", "--plugins", "twse", "--daemon"]) == 0
+    assert seen[-1] == {"daemon": True, "name": "paper", "port": 8786, "plugins": "twse", "db_path": None}
+    assert cli.main(["service", "install", "--db", str(db)]) == 0 and seen[-1]["db_path"] == db and seen[-1]["name"] == ""
+    monkeypatch.setattr(service, "run", lambda s, log, **kw: seen.append(kw) or 0)
+    assert cli.main(["service", "run", "--name", "paper", "--port", "8786"]) == 0 and seen[-1] == {"daemon": False, "port": 8786}
+    assert fetcher.plugins_line({"selection": "twse,nobody", "loaded": ["twse"], "leftOut": ["massive"], "unknown": ["nobody"]}) \
+        == "plugins loaded: twse (twse,nobody asked for); left out: massive; unknown: nobody"
+    assert fetcher.plugins_line({"selection": "all", "loaded": []}) == "plugins loaded: none"

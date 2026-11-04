@@ -19,6 +19,19 @@ def no_saved_keys(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def every_plugin(monkeypatch):
+    """Every plugin loaded unless a test selects otherwise (lib.select); the selection undone after."""
+    import os
+
+    from liminal_lib.sources import registry
+
+    monkeypatch.delenv(registry.SELECTION_VAR, raising=False)
+    yield
+    if os.environ.pop(registry.SELECTION_VAR, None) is not None or not registry._selection.everything:
+        registry.reload()
+
+
+@pytest.fixture(autouse=True)
 def no_found_limits(monkeypatch):
     """Nor the limits kept from the user's last capability scans (in their database)."""
     from liminal_lib.sources import registry

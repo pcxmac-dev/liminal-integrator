@@ -1,11 +1,14 @@
 """The integrator's command line: `liminal-integrator serve|status|request|pass|cancel|host` and
 `liminal-integrator service install|remove|status|run`, `--daemon` on serve, install and run for
-the fetcher held for good. The app's own command line answers the same (`liminal fetcher ...`,
-`liminal service ...`), through here."""
+the fetcher held for good; `--plugins` for the plugins loaded (names, or none); `--name` (with
+`--db`, `--port`) for an integrator of its own, on its own database. The app's own command line
+answers the same (`liminal fetcher ...`, `liminal service ...`), through here."""
 from __future__ import annotations
 
 import argparse
 import json
+import os
+from pathlib import Path
 
 from . import fetcher, lib, service
 
@@ -29,9 +32,12 @@ def cmd_fetcher(args, settings) -> int:
         if status is None:
             print("the fetcher has never run on this database")
         else:
-            print(f"fetcher: pid {status.get('pid')}, {'busy' if status.get('busy') else 'idle'}, page {status.get('page') or 'none'}, "
+            who = f"fetcher {status['name']}" if status.get("name") else "fetcher"
+            print(f"{who}: pid {status.get('pid')}, {'busy' if status.get('busy') else 'idle'}, page {status.get('page') or 'none'}, "
                   f"clients {status.get('clients')}, last pass {status.get('lastPass') or 'never'}, "
                   f"next due {status.get('nextDue') or 'unknown'}, feeds held: {', '.join(status.get('feeds') or []) or 'none'}")
+            if status.get("plugins"):
+                print(f"  {fetcher.plugins_line(status['plugins'])}")
         for r in rows:
             print(f"  #{r['id']:<5} {r['symbol']:<12} {r['state']:<11} {r['by']:<8} {','.join(r['kinds']):<10} {r['asked_at'][:19]}  "
                   f"{r['detail'] or ''}")
@@ -82,13 +88,51 @@ def cmd_service(args, settings) -> int:
     the installed service runs: `serve` without the browser); `--daemon` holds the fetcher for good."""
     log = lib.log_to(settings.db_path)
     daemon = bool(getattr(args, "daemon", False))
+    name = getattr(args, "name", None) or ""
+    port = getattr(args, "port", None)
     if args.action == "run":
-        return service.run(settings, log, daemon=daemon)
+        return service.run(settings, log, daemon=daemon, port=port)
     if args.action == "install":
-        return service.install(settings, log, daemon=daemon)
+        return service.install(settings, log, daemon=daemon, name=name, port=port, plugins=getattr(args, "plugins", None),
+                               db_path=Path(args.db).expanduser() if getattr(args, "db", None) else None)
     if args.action == "remove":
-        return service.remove(settings, log)
-    return service.status(settings, log)
+        return service.remove(settings, log, name=name)
+    return service.status(settings, log, name=name)
+
+
+def apply_instance(args) -> bool:
+    """`--name`, `--db` and `--plugins` applied to this process before its settings load, and so to
+    the ones it starts (its environment): the integrator's name (LIMINAL_INTEGRATOR_NAME) and its
+    own database (LIMINAL_DB: `--db`, else store/data/<name>/liminal.db: fetcher.instance_db), the
+    plugins loaded (LIMINAL_PLUGINS_LOADED: names, or none; lib.select). Whether anything was set.
+    ValueError: a name that cannot be one."""
+    name = getattr(args, "name", None)
+    db = getattr(args, "db", None)
+    plugins = getattr(args, "plugins", None)
+    changed = False
+    if name:
+        os.environ[fetcher.NAME_VAR] = fetcher.check_name(name)
+        changed = True
+    if db:
+        os.environ["LIMINAL_DB"] = str(Path(db).expanduser())
+        changed = True
+    elif name:
+        os.environ["LIMINAL_DB"] = str(fetcher.instance_db(name))
+    if plugins is not None:
+        lib.select(plugins)
+        changed = True
+    return changed
+
+
+def add_instance_arguments(p: argparse.ArgumentParser, actions: str) -> None:
+    """`--name`, `--db`, `--plugins`: an integrator of its own, and the plugins it loads."""
+    p.add_argument("--name", help=f"{actions}: this integrator's name when it is not the only one (LIMINAL_INTEGRATOR_NAME): "
+                                  "on a database of its own (store/data/NAME/liminal.db unless --db) and a page port of its "
+                                  "own (--port)")
+    p.add_argument("--db", help=f"{actions}: the database, its main file (LIMINAL_DB)")
+    p.add_argument("--plugins", help=f"{actions}: the plugins loaded, their names comma separated (a part's name keeps its "
+                                     "plugin), or none for no plugin at all; every plugin found without it "
+                                     "(LIMINAL_PLUGINS_LOADED)")
 
 
 def add_fetcher_arguments(p: argparse.ArgumentParser) -> None:
@@ -104,6 +148,7 @@ def add_fetcher_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--daemon", action="store_true",
                    help="serve: hold the fetcher for good as well, so it collects what it can on its own; otherwise it "
                         "runs only while a page is in touch")
+    add_instance_arguments(p, "serve, host")
 
 
 def add_service_arguments(p: argparse.ArgumentParser) -> None:
@@ -111,6 +156,8 @@ def add_service_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--daemon", action="store_true",
                    help="install, run: the fetcher held for good (it collects what it can on its own); otherwise it "
                         "runs only while a page is in touch")
+    p.add_argument("--port", type=int, help="install, run: the page's port (LIMINAL_FETCHER_PORT, 8785; 0: a free one)")
+    add_instance_arguments(p, "install, run (status, remove: --name)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,5 +193,10 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ACTIONS:  # `liminal-integrator serve`: the fetcher's actions at the top
         argv = ["fetcher", *argv]
     args = build_parser().parse_args(argv)
+    try:
+        apply_instance(args)
+    except ValueError as e:
+        print(e)
+        return 2
     settings = lib.config.load_settings()
     return args.func(args, settings)
