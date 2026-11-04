@@ -8,7 +8,7 @@ for database access"; "so the app needs to funnel requests through the fetcher t
 "i can look at the fetcher to see what the data looks like, i can use the 'app' to see what i want
 to do".
 
-The fetcher runs as the resident host `fetcher` (liminal_lib.host): one per database, up while
+The fetcher runs as the resident host `fetcher` (liminal_libs.host): one per database, up while
 someone holds it (the chart app while a page is in touch, `liminal-integrator serve` or the app's
 `sync` by hand, a service that holds it for good: service.py) and gone once nobody does. It owns
 the databases: the data API (the app's, liminal.gui.server) answers on its local port, where its
@@ -16,9 +16,9 @@ own page shows the data (the monitoring views, the plugins, the exchanges, the n
 the chart app is a front that funnels every request of its pages to it.
 
 Its work (Fetcher.run), between ticks of TICK_SECONDS while it is up:
-- the requests (liminal_lib.storage.requests): the newest ask first, then its standing work in
+- the requests (liminal_libs.storage.requests): the newest ask first, then its standing work in
   order. For each it assesses the work over the plugins set up here (`assess`: what each can give
-  for the symbol, by cost and capability, from the delivery scheme in liminal_lib.sourcing), asks
+  for the symbol, by cost and capability, from the delivery scheme in liminal_libs.sourcing), asks
   every feed of the plan for the symbol before anything else (collector.request_priority) and holds
   those feeds' runs (the hosts feed-NAME) until each has served it or its run has ended;
 - the standing pass: every PASS_HOURS while it is up, once new data can exist (`next_due`: the
@@ -30,7 +30,7 @@ Its work (Fetcher.run), between ticks of TICK_SECONDS while it is up:
   (`handle`).
 
 The plugins it loads are every plugin found, or the ones it is told (`--plugins twse,tiingo`, or
-`none`: liminal_lib.sources.registry's selection, LIMINAL_PLUGINS_LOADED, inherited by every process
+`none`: liminal_libs.sources.registry's selection, LIMINAL_PLUGINS_LOADED, inherited by every process
 it starts); its status says which were loaded and which left out. An integrator of its own
 (`--name`, LIMINAL_INTEGRATOR_NAME: the user, 2026-11-03, "multiple integrators can address
 databases") runs on its own database (store/data/<name>/liminal.db unless `--db`) with its own page
@@ -262,7 +262,7 @@ class Fetcher:
         self.stop = threading.Event()
         self.wake = threading.Event()
         self.lock = threading.RLock()
-        self.feeds: dict[str, object] = {}  # feed -> its run's attachment (liminal_lib.host), held
+        self.feeds: dict[str, object] = {}  # feed -> its run's attachment (liminal_libs.host), held
         self.by_pass: set[str] = set()  # the feeds the standing pass holds (until their runs end)
         self.history = None  # the closed months' copy, held
         self.extras = None  # the extras' process

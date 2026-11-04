@@ -2,7 +2,7 @@
 `liminal-integrator service install|remove|status|run`, `--daemon` on serve, install and run for
 the fetcher held for good; `--plugins` for the plugins loaded (names, or none); `--name` (with
 `--db`, `--port`) for an integrator of its own, on its own database. The app's own command line
-answers the same (`liminal fetcher ...`, `liminal service ...`), through here."""
+answers the same (`liminal-charts fetcher ...`, `liminal-charts service ...`), through here."""
 from __future__ import annotations
 
 import argparse

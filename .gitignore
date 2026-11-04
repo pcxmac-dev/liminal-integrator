@@ -9,5 +9,5 @@ dist/
 *.db-wal
 *.db-shm
 *.lock
-# the databases, beside this program in the workspace's store/ (liminal_lib.layout): never in git
+# the databases, beside this program in the workspace's store/ (liminal_libs.layout): never in git
 data/

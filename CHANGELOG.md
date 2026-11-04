@@ -1,11 +1,18 @@
 # Changelog
 
+## 1.5.0 (2026-11-03)
+
+On liminal-libs 1.4.0 and liminal-charts (the library and the charts app renamed: the naming by system, the
+user, 2026-11-03: apps `liminal-<app>`, the library `liminal-libs`, plugins `plugin-<app>-<name>`); every
+import of `liminal_lib` is `liminal_libs`, the page served is `liminal_charts`'s. The integrator's own name
+stays (`liminal-integrator`, `liminal_integrator`, the task `LiminalIntegrator`).
+
 ## 1.4.0 (2026-11-03)
 
 The plugins an integrator loads, and integrators of their own (the user, 2026-11-03: "the default case
 is to load all plugins, however the integrator can be loaded with select plugins or none"; "multiple
 integrators can address databases"). `--plugins twse,tiingo` or `--plugins none` on `serve`, `host`,
-`service install` and `service run` (liminal-lib 1.3.1's selection, LIMINAL_PLUGINS_LOADED, inherited by
+`service install` and `service run` (liminal-libs 1.3.1's selection, LIMINAL_PLUGINS_LOADED, inherited by
 every process the integrator starts; every plugin found without it); the fetcher's status and log say
 which plugins were loaded, which left out and which names nobody answered to (`fetcher status`, the
 Fetcher view). `--name NAME` installs or serves an integrator of its own: on its own database
@@ -13,13 +20,13 @@ Fetcher view). `--name NAME` installs or serves an integrator of its own: on its
 plugins, as the task `LiminalIntegrator-NAME` (the unit `liminal-integrator-NAME`), its name
 (LIMINAL_INTEGRATOR_NAME) in its status; `service status|remove --name NAME` ask after it. The host
 `fetcher` stays one per database, the machine's ledgers shared by key. `cli.apply_instance` applies
-the three to the process before its settings load (the app's `liminal fetcher|service ...` does the
+the three to the process before its settings load (the app's `liminal-charts fetcher|service ...` does the
 same); `service.Service(settings, log, daemon, name, port, plugins, db_path)`, `task_name`, `unit_name`,
 `command(daemon, name, db_path, port, plugins)`.
 
 ## 1.3.0 (2026-11-03)
 
-On liminal-lib 1.3.0 (the class contract, plugin API 2.0: a plugin's capability scan asked for with
+On liminal-libs 1.3.0 (the class contract, plugin API 2.0: a plugin's capability scan asked for with
 `has_scan`). The fetcher's assessment is a class, `fetcher.Assessor(store, settings, now)`: the feed
 profiles read once a tick for every request taken and for the standing pass's `next_due`; `assess()`
 stays, one assessment on its own. The service is `service.Service(settings, log, daemon)` with
@@ -47,16 +54,16 @@ copy (the user, 2026-11-03), a request showed only "nothing fetched: offline".
 
 A symbol is assessed under its stored ticker however it is typed (`SPCX::NASDAQ`, `EUR/USD`, `TSE:7203`: the
 library's `resolve` first; before, the typed text was looked up and a request for `SPCX::NASDAQ` failed). Stocks
-listed outside the US (liminal-lib 1.2.0, plugin API 1.12): `7203.T`, `2330.TW`, `600519.SS` go to the feeds
+listed outside the US (liminal-libs 1.2.0, plugin API 1.12): `7203.T`, `2330.TW`, `600519.SS` go to the feeds
 whose plugins carry their exchange, and a listing no feed here carries says so ("no feed set up here carries
 XTKS listings"); the standing pass's next due moment counts each feed's listings abroad by their exchanges' days
-(`next_due(..., exchanges=store.watch_exchanges())`). Requires liminal-lib 1.2.0.
+(`next_due(..., exchanges=store.watch_exchanges())`). Requires liminal-libs 1.2.0.
 
 ## 1.1.2 (2026-11-02)
 
-The app is liminal-app (package `liminal_app`): the page and the front are imported from there, the extras pass
-runs `python -m liminal_app sync --extras-only` (the library's `host.APP_MODULE`), and the distribution depends on
-`liminal-app`; CI installs it from its renamed repository.
+The app is liminal-charts (package `liminal_charts`): the page and the front are imported from there, the extras pass
+runs `python -m liminal_charts sync --extras-only` (the library's `host.APP_MODULE`), and the distribution depends on
+`liminal-charts`; CI installs it from its renamed repository.
 
 ## 1.1.1 (2026-11-02)
 

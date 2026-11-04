@@ -10,8 +10,8 @@ import pytest
 @pytest.fixture(autouse=True)
 def no_saved_keys(monkeypatch):
     """Tests never read the user's saved keys (their user environment variables)."""
-    from liminal_lib import config
-    from liminal_lib.sources.registry import variables
+    from liminal_libs import config
+    from liminal_libs.sources.registry import variables
 
     monkeypatch.setattr(config, "saved_user_keys", lambda: {})
     for name in variables():
@@ -23,7 +23,7 @@ def every_plugin(monkeypatch):
     """Every plugin loaded unless a test selects otherwise (lib.select); the selection undone after."""
     import os
 
-    from liminal_lib.sources import registry
+    from liminal_libs.sources import registry
 
     monkeypatch.delenv(registry.SELECTION_VAR, raising=False)
     yield
@@ -34,7 +34,7 @@ def every_plugin(monkeypatch):
 @pytest.fixture(autouse=True)
 def no_found_limits(monkeypatch):
     """Nor the limits kept from the user's last capability scans (in their database)."""
-    from liminal_lib.sources import registry
+    from liminal_libs.sources import registry
 
     monkeypatch.setattr(registry, "found_limits", lambda name, settings: [])
 
@@ -43,7 +43,7 @@ def no_found_limits(monkeypatch):
 def no_processes_or_hosts(monkeypatch, tmp_path):
     """Tests never start a process (the extras, a host) nor attach to a host: a test that wants a
     feed's run gives a fake (lib.feed_run)."""
-    from liminal_lib import host
+    from liminal_libs import host
 
     from liminal_integrator import fetcher, lib
 
