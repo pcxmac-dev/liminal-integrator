@@ -301,23 +301,30 @@ def test_the_fetcher_answers_its_clients_and_runs_until_its_host_stops_it(settin
         assert lib.read_status(store)["feeds"] == []
 
 
-def test_run_host_serves_the_fetcher_with_the_apps_page(settings, monkeypatch):
+def test_run_host_runs_the_fetcher_under_its_host_with_no_http_of_its_own(settings, monkeypatch):
+    """The user, 2026-11-03: "for the webserver / ports, i just integrator, and charts": the fetcher
+    host is the host and the work alone, over its pipe; its status names the integrator's page."""
     seen: dict = {}
 
-    def serve_fetcher(s, f, h, port, rescan=True, reload_settings=None):
-        seen.update(f=f, h=h, port=port, rescan=rescan)
-        return "ended"
-    monkeypatch.setattr(lib, "page", lambda: serve_fetcher)
+    class FakeHost:
+        def __init__(self, name, db_path, log=print):
+            self.name, self.db_path = name, db_path
+
+        def serve(self, work, secure=None, handle=None):
+            seen.update(work=work, handle=handle, secure=secure)
+            return "ended"
+    monkeypatch.setattr(lib, "Host", FakeHost)
+    monkeypatch.setattr(lib, "page", lambda: pytest.fail("the fetcher host serves no page"))
     monkeypatch.setenv("LIMINAL_FETCHER_PORT", "none")
-    monkeypatch.setenv("LIMINAL_NO_RESCAN", "1")
     assert fetcher.run_host(settings, lambda m: None) == "ended"
-    assert isinstance(seen["f"], fetcher.Fetcher) and seen["h"].name == "fetcher" and seen["port"] is None
-    assert seen["rescan"] is False
+    f = seen["work"].__self__
+    assert isinstance(f, fetcher.Fetcher) and seen["handle"] == f.handle and f.host.name == "fetcher" and f.page_url is None
     monkeypatch.setenv("LIMINAL_FETCHER_PORT", "8790")
     assert fetcher.page_port() == 8790
+    assert fetcher.run_host(settings, lambda m: None) == "ended" and seen["work"].__self__.page_url == "http://127.0.0.1:8790/"
+    assert fetcher.run_host(settings, lambda m: None, port=8791) == "ended" and seen["work"].__self__.page_url == "http://127.0.0.1:8791/"
     monkeypatch.setenv("LIMINAL_FETCHER_PORT", "0")
-    assert fetcher.page_port() == 0  # a free one
-    assert fetcher.run_host(settings, lambda m: None, port=0, rescan=True) == "ended" and seen["port"] == 0 and seen["rescan"]
+    assert fetcher.page_port() == 0 and fetcher.page_url_of(0) is None
 
 
 # -- the command line ------------------------------------------------------------------------

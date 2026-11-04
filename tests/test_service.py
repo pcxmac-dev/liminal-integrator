@@ -1,8 +1,9 @@
-"""The integrator's service (service.py): its page from the user's logon with the fetcher running
-while a page is in touch, or as a daemon (the user, 2026-11-02: "the integrator needs to be able to
-run autonomously in a 'daemon' mode") the fetcher held for good and started again when it ends;
-`serve` runs the same in the foreground. Nothing is installed or started here: the page's front and
-the fetcher stand in as fakes."""
+"""The integrator's service (service.py): its page and data API served in its own process from the
+user's logon with the fetcher running while a page is in touch (the user, 2026-11-03: "for the
+webserver / ports, i just integrator, and charts"), or as a daemon (2026-11-02: "the integrator needs
+to be able to run autonomously in a 'daemon' mode") the fetcher held for good and started again when
+it ends; `serve` runs the same in the foreground. Nothing is installed or started here: the page
+server and the fetcher stand in as fakes."""
 from __future__ import annotations
 
 import os
@@ -35,13 +36,16 @@ def _settings(tmp_path):
     return replace(lib.config.load_settings(env={}, env_file=None), db_path=tmp_path / "liminal.db")
 
 
-def _fake_front(served: list):
-    """A serve_front (the app's front) that records what it was asked and stays up until told to stop."""
-    def serve_front(db_path, port=8765, open_browser=True, log=None, mode="chart", stop=None):
-        served.append({"db_path": db_path, "port": port, "open_browser": open_browser, "mode": mode})
+def _fake_page(served: list):
+    """A serve_integrator (the charts app's page server) that records what it was asked and stays up
+    until told to stop."""
+    def serve_integrator(settings, port, *, link, open_browser=False, log=None, stop=None, rescan=False, reload_settings=None,
+                         until_quiet=False):
+        served.append({"db_path": settings.db_path, "port": port, "open_browser": open_browser, "link": type(link).__name__,
+                       "until_quiet": until_quiet})
         stop.wait()
         served.append("down")
-    return serve_front
+    return serve_integrator
 
 
 def _down(served: list) -> None:
@@ -58,7 +62,7 @@ def _no_hold(db_path, log=print):
 def test_the_service_keeps_the_page_and_the_fetcher_runs_only_while_a_page_is_in_touch(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     served: list = []
-    monkeypatch.setattr(lib, "front", lambda: _fake_front(served))
+    monkeypatch.setattr(lib, "page", lambda: _fake_page(served))
     monkeypatch.setattr(lib, "attach_fetcher", _no_hold)
     monkeypatch.setenv("LIMINAL_FETCHER_PORT", "8791")
     monkeypatch.setattr(service, "CHECK_SECONDS", 0.01)
@@ -66,9 +70,15 @@ def test_the_service_keeps_the_page_and_the_fetcher_runs_only_while_a_page_is_in
     stop = threading.Event()
     threading.Timer(0.3, stop.set).start()
     assert service.run(settings, lines.append, stop) == 0
-    assert served[0] == {"db_path": settings.db_path, "port": 8791, "open_browser": False, "mode": "fetcher"}
+    assert served[0] == {"db_path": settings.db_path, "port": 8791, "open_browser": False, "link": "FetcherLink", "until_quiet": False}
     _down(served)
-    assert any("page at http://127.0.0.1:8791/" in m for m in lines) and lines[-1].startswith("service: ended")
+    assert any("page and data API at http://127.0.0.1:8791/" in m for m in lines) and lines[-1].startswith("service: ended")
+    # until quiet (what the chart front starts for itself): the page server is told so
+    served.clear()
+    stop = threading.Event()
+    threading.Timer(0.1, stop.set).start()
+    assert service.run(settings, lines.append, stop, until_quiet=True) == 0 and served[0]["until_quiet"] is True
+    _down(served)
     # in the foreground (`serve`): its page in the browser, on the port asked
     served.clear()
     stop = threading.Event()
@@ -93,7 +103,7 @@ def test_the_daemon_holds_the_fetcher_and_starts_it_again_when_it_ends(tmp_path,
         return att
     monkeypatch.setattr(lib, "attach_fetcher", attach_fetcher)
     served: list = []
-    monkeypatch.setattr(lib, "front", lambda: _fake_front(served))
+    monkeypatch.setattr(lib, "page", lambda: _fake_page(served))
     monkeypatch.setenv("LIMINAL_FETCHER_PORT", "8791")
     monkeypatch.setattr(service, "RESTART_SECONDS", 0.01)
     monkeypatch.setattr(service, "CHECK_SECONDS", 0.01)
@@ -103,7 +113,7 @@ def test_the_daemon_holds_the_fetcher_and_starts_it_again_when_it_ends(tmp_path,
     assert service.run(settings, lines.append, stop, daemon=True) == 0
     assert made[0] is None and made[1].detached is False and made[1].lives < 0  # it ended on its own
     assert made[2].detached  # the one held when the service stopped: let go
-    assert served and served[0]["mode"] == "fetcher" and served[0]["port"] == 8791  # its page is up as well
+    assert served and served[0]["port"] == 8791 and served[0]["until_quiet"] is False  # its page is up as well; never until quiet
     _down(served)
     assert any("no fetcher answered" in m for m in lines) and any("the fetcher ended" in m for m in lines)
     assert lines[-1].startswith("service: ended")
@@ -192,12 +202,13 @@ def test_serve_runs_the_service_here_with_its_page_in_the_browser(tmp_path, monk
     not to, on the port asked, the fetcher held for good with --daemon; `host` runs a fetcher here."""
     settings = _settings(tmp_path)
     ran: list = []
-    monkeypatch.setattr(service, "run", lambda s, log, stop=None, open_browser=False, port=None, daemon=False:
-                        ran.append((open_browser, port, daemon)) or 0)
+    monkeypatch.setattr(service, "run", lambda s, log, stop=None, open_browser=False, port=None, daemon=False, until_quiet=False:
+                        ran.append((open_browser, port, daemon, until_quiet)) or 0)
     monkeypatch.setattr(lib.config, "load_settings", lambda *a, **kw: settings)
-    assert cli.main(["serve", "--no-browser"]) == 0 and ran[-1] == (False, None, False)
-    assert cli.main([]) == 0 and ran[-1] == (True, None, False)  # the default: in the browser, on the fetcher's port
-    assert cli.main(["serve", "--port", "0", "--no-browser", "--daemon"]) == 0 and ran[-1] == (False, 0, True)
+    assert cli.main(["serve", "--no-browser"]) == 0 and ran[-1] == (False, None, False, False)
+    assert cli.main([]) == 0 and ran[-1] == (True, None, False, False)  # the default: in the browser, on the integrator's port
+    assert cli.main(["serve", "--port", "0", "--no-browser", "--daemon"]) == 0 and ran[-1] == (False, 0, True, False)
+    assert cli.main(["serve", "--no-browser", "--until-quiet"]) == 0 and ran[-1] == (False, None, False, True)
     hosted: list = []
     monkeypatch.setattr(cli.fetcher, "run_host", lambda settings, log=None, port=None, rescan=None: hosted.append(port))
     assert cli.main(["host", "--port", "8792"]) == 0 and hosted == [8792]
@@ -256,7 +267,7 @@ def test_an_integrator_of_its_own_has_its_name_database_port_and_plugins(tmp_pat
         monkeypatch.setenv(var, "")  # restored (deleted) after
     monkeypatch.setattr(lib.config, "load_settings", lambda *a, **kw: replace(settings, db_path=Path(os.environ["LIMINAL_DB"])))
     ran: list = []
-    monkeypatch.setattr(service, "run", lambda s, log, stop=None, open_browser=False, port=None, daemon=False:
+    monkeypatch.setattr(service, "run", lambda s, log, stop=None, open_browser=False, port=None, daemon=False, until_quiet=False:
                         ran.append((s.db_path, port, daemon)) or 0)
     assert cli.main(["serve", "--name", "paper", "--port", "8786", "--plugins", "none", "--no-browser"]) == 0
     assert os.environ[fetcher.NAME_VAR] == "paper" and fetcher.instance_name() == "paper"
@@ -275,3 +286,54 @@ def test_an_integrator_of_its_own_has_its_name_database_port_and_plugins(tmp_pat
     assert fetcher.plugins_line({"selection": "twse,nobody", "loaded": ["twse"], "leftOut": ["massive"], "unknown": ["nobody"]}) \
         == "plugins loaded: twse (twse,nobody asked for); left out: massive; unknown: nobody"
     assert fetcher.plugins_line({"selection": "all", "loaded": []}) == "plugins loaded: none"
+
+
+def test_the_link_holds_the_fetcher_while_a_page_is_in_touch_and_asks_it_over_the_pipe(tmp_path, monkeypatch):
+    """FetcherLink: the page server's hold on the fetcher host (the user, 2026-11-03: two listeners,
+    the fetcher host with no HTTP of its own): attached at a page's first touch (started if none
+    answers), its status, a wake and a pass over the pipe, let go once quiet, attached again after."""
+    class Pipe(FakeAttachment):
+        def __init__(self):
+            super().__init__(lives=99)
+            self.asked: list[dict] = []
+
+        def ask(self, **what):
+            self.asked.append(what)
+            if self.detached:
+                raise EOFError("gone")
+            return {"pid": 4242, "busy": False} if what.get("status") else {"ok": True}
+
+    pipes: list[Pipe] = []
+
+    def attach_fetcher(db_path, log=print):
+        assert db_path == tmp_path / "liminal.db"
+        pipes.append(Pipe())
+        return pipes[-1]
+    monkeypatch.setattr(lib, "attach_fetcher", attach_fetcher)
+    lines: list[str] = []
+    link = service.FetcherLink(tmp_path / "liminal.db", lines.append)
+    assert not link.connected
+    link.touch()
+    assert link.connected and len(pipes) == 1 and any("connected to the fetcher (pid 4242)" in m for m in lines)
+    link.touch()
+    assert len(pipes) == 1  # held: not attached again
+    assert link.status() == {"pid": 4242, "busy": False} and pipes[0].asked[-1] == {"status": True}
+    link.wake_up()
+    link.ask_pass()
+    assert pipes[0].asked[-2:] == [{"wake": True}, {"pass": True}]
+    pipes[0].detach()  # the fetcher gone: the next ask attaches (and starts) again
+    assert link.status() == {"pid": 4242, "busy": False} and len(pipes) == 2
+    assert link.let_go() is True and pipes[1].detached and not link.connected and link.let_go() is False
+    # quiet: no page in touch for a while, the fetcher let go, and the server told when asked (until quiet)
+    link.touch()
+    monkeypatch.setattr(link, "quiet_seconds", lambda: 0.05)
+    monkeypatch.setattr(service, "QUIET_CHECK_SECONDS", 0.01)
+    stop = threading.Event()
+    quiet: list = []
+    threading.Thread(target=link.watch_quiet, args=(stop, lambda: quiet.append(1) or stop.set()), daemon=True).start()
+    assert stop.wait(5) and quiet == [1] and pipes[2].detached and not link.connected
+    assert any("quiet: no page in touch" in m for m in lines)
+    # no fetcher answers at all: nothing to ask; the page reads the status file then
+    monkeypatch.setattr(lib, "attach_fetcher", lambda db_path, log=print: None)
+    assert link.status() is None and not link.connected
+    link.wake_up()  # nothing to wake: no error

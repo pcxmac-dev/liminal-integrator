@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.0 (2026-11-03)
+
+Two listeners on the machine (the user: "for the webserver / ports, i just integrator, and charts"): the
+integrator's process serves its page and the data API itself at LIMINAL_FETCHER_PORT (`lib.page()`: the
+charts app's `serve_integrator`, reading the data here) and holds the fetcher host over the pipe through
+`service.FetcherLink` (attached at a page's first request, started if none answers, let go once none has
+been in touch for LIMINAL_QUIET_SECONDS; the status, a wake and a pass over the pipe). The fetcher host
+has no HTTP of its own any more (`fetcher.run_host`: the host and the work alone; its status names the
+integrator's page). `serve --until-quiet` ends the server once no page has been in touch for a while:
+what the chart app's front starts for itself when nothing answers at the integrator's port. `lib.front()`
+is gone (the charts front no longer attaches to the fetcher: it proxies to the integrator).
+
 ## 1.5.0 (2026-11-03)
 
 On liminal-libs 1.4.0 and liminal-charts (the library and the charts app renamed: the naming by system, the

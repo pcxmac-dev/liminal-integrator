@@ -1,8 +1,8 @@
 """Every call into the library goes through here (the user, 2026-11-01: "make sure that the library
-calls contribute to code reuse"; "all lib calls will point to liminal-libs"): what the integrator
-uses of liminal-libs, by name, and nothing of the app but the page it serves (page()) and the front
-that keeps that page at its port (front()). A library piece the integrator needs is added to
-liminal-libs, never written here twice."""
+calls contribute to code reuse"; "all lib calls will point to liminal-lib"): what the integrator
+uses of liminal-libs, by name, and nothing of the charts app but the page and data API it serves
+in its own process (page()). A library piece the integrator needs is added to liminal-libs, never
+written here twice."""
 from __future__ import annotations
 
 from liminal_libs import collector, config, freshness, layout, proc, runner, sourcing  # noqa: F401
@@ -22,18 +22,11 @@ from liminal_libs.symbols import resolve  # noqa: F401
 
 
 def page():
-    """The page and data API the fetcher serves: the chart app's (liminal_charts.gui.server.serve_fetcher),
-    imported when a fetcher starts, not before (the app, liminal-charts, is the integrator's one
-    dependency outside the library, for this)."""
-    from liminal_charts.gui.server import serve_fetcher
+    """The integrator's page and data API, served in the integrator's own process (the user,
+    2026-11-03: "for the webserver / ports, i just integrator, and charts"): the chart app's
+    liminal_charts.gui.server.serve_integrator, with a FetcherLink (service.py) to the fetcher host
+    over the pipe. Imported when the server starts, not before (the app, liminal-charts, is the
+    integrator's one dependency outside the library, for this)."""
+    from liminal_charts.gui.server import serve_integrator
 
-    return serve_fetcher
-
-
-def front():
-    """The front that keeps the fetcher's page at its port while the fetcher comes and goes (the
-    app's, liminal_charts.gui.front.serve_front, in mode "fetcher"): `serve`, and the service. Imported
-    when asked, not before."""
-    from liminal_charts.gui.front import serve_front
-
-    return serve_front
+    return serve_integrator

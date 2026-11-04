@@ -3,11 +3,16 @@ touch, or, as a daemon, the fetcher held for good so it collects what it can on 
 foreground with `serve`, from your logon once installed.
 
 The user, 2026-11-02: "i need a way to run it from the browser like the other liminals", and "the
-integrator needs to be able to run autonomously in a 'daemon' mode". So the fetcher's page is kept
-at http://127.0.0.1:8785/ like the chart app's at 8765 (lib.front(): the app's front in mode
-"fetcher"; the fetcher, fetcher.py's host `fetcher`, attached and started if none answers when a
-page comes, let go once none has been in touch for a while; its own page then takes a free port,
-learnt from it). "Only while I use it" (2026-11-01) stays the default: between pages nothing runs.
+integrator needs to be able to run autonomously in a 'daemon' mode"; 2026-11-03: "for the webserver
+/ ports, i just integrator, and charts". So this process serves the integrator's page and the data
+API itself at http://127.0.0.1:8785/ like the chart app's front at 8765 (lib.page(): the charts
+app's serve_integrator, reading the data here), and holds the fetcher (fetcher.py's host `fetcher`,
+over its pipe alone) through a FetcherLink: attached, and started if none answers, at the first
+request of a page, let go once none has been in touch for a while; its status, a wake and a pass
+go over the pipe. Two listeners on the machine, the fetcher host none. "Only while I use it"
+(2026-11-01) stays the default: between pages nothing runs. `serve --until-quiet` ends this process
+too once no page has been in touch for a while: what the chart app's front starts for itself when
+nothing answers at the port.
 With `--daemon` the fetcher is held for good, started again once it ends, and its standing passes
 go on on their own (every feed's run once new data can exist, the closed months' copy, the extras);
 between passes it holds no store and no plugin's run.
@@ -35,6 +40,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -44,7 +50,107 @@ TASK_NAME = "LiminalIntegrator"
 UNIT_NAME = "liminal-integrator"
 RESTART_SECONDS = 10.0  # the daemon starts the fetcher again this long after it ended
 CHECK_SECONDS = 5.0
+QUIET_SECONDS = 120.0  # no page in touch for this long: the fetcher let go (LIMINAL_QUIET_SECONDS)
+QUIET_CHECK_SECONDS = 15.0
 Log = Callable[[str], None]
+
+
+class FetcherLink:
+    """This process's hold on the fetcher host over the pipe, for the page and data API served here
+    (lib.page()): attached at a page's first request (`touch`; the fetcher started if none answers),
+    let go once no page has been in touch for QUIET_SECONDS (`watch_quiet`; the daemon's own hold
+    keeps the fetcher up regardless); its status, a wake and a pass asked over the pipe (what the
+    page server asks of a fetcher: `status`, `wake_up`, `ask_pass`)."""
+
+    def __init__(self, db_path: Path, log: Log = print):
+        self.db_path = Path(db_path)
+        self.log = log
+        self._lock = threading.Lock()
+        self._att = None
+        self._last_contact = time.monotonic()
+        self._woken = False
+
+    def quiet_seconds(self) -> float:
+        try:
+            return float(lib.config.setting("LIMINAL_QUIET_SECONDS") or QUIET_SECONDS)
+        except ValueError:
+            return QUIET_SECONDS
+
+    @property
+    def connected(self) -> bool:
+        with self._lock:
+            return self._att is not None
+
+    def touch(self) -> None:
+        """A page is in touch: the fetcher attached (started if none answers) and kept."""
+        with self._lock:
+            self._last_contact = time.monotonic()
+            self._woken = True
+            self._attach_locked()
+
+    def _attach_locked(self):
+        if self._att is not None:
+            try:
+                if self._att.alive():
+                    return self._att
+            except Exception:  # noqa: BLE001 - a broken pipe is a fetcher gone
+                pass
+            self._att = None
+        self._att = lib.attach_fetcher(self.db_path, log=self.log)
+        if self._att is not None:
+            self.log(f"the integrator's page is connected to the fetcher (pid {self._att.host_pid})")
+        return self._att
+
+    def _ask(self, **what):
+        with self._lock:
+            self._last_contact = time.monotonic()
+            self._woken = True
+            att = self._attach_locked()
+            if att is None:
+                return None
+            try:
+                return att.ask(**what)
+            except (OSError, EOFError, ValueError):
+                self._att = None  # gone: attached (and started) again at the next ask
+                return None
+
+    def status(self) -> dict | None:
+        """The fetcher's status over the pipe; None when none answers (the page reads the file then)."""
+        answer = self._ask(status=True)
+        return answer if isinstance(answer, dict) else None
+
+    def wake_up(self) -> None:
+        self._ask(wake=True)
+
+    def ask_pass(self) -> None:
+        self._ask(**{"pass": True})
+
+    def let_go(self) -> bool:
+        """The fetcher let go (it ends once nobody holds it). Whether it was held."""
+        with self._lock:
+            att, self._att = self._att, None
+        if att is None:
+            return False
+        try:
+            att.detach()
+        except Exception:  # noqa: BLE001 - gone already
+            pass
+        return True
+
+    def watch_quiet(self, stop: threading.Event | None = None, on_quiet: Callable[[], None] | None = None) -> None:
+        """Lets the fetcher go once no page has been in touch for quiet_seconds (a thread), and
+        calls `on_quiet` then (serve --until-quiet: the server ends)."""
+        stop = stop or threading.Event()
+        while not stop.wait(QUIET_CHECK_SECONDS):
+            with self._lock:
+                due = self._woken and time.monotonic() - self._last_contact >= self.quiet_seconds()
+            if due:
+                held = self.let_go()
+                self._woken = False
+                if held:
+                    self.log(f"quiet: no page in touch for {self.quiet_seconds():g} s; the fetcher is let go")
+                if on_quiet is not None:
+                    on_quiet()
 
 
 def python_quiet() -> Path:
@@ -234,10 +340,11 @@ class Service:
     The module's functions of the same names are these, for the command line."""
 
     def __init__(self, settings, log: Log = print, daemon: bool = False, name: str = "", port: int | None = None,
-                 plugins: str | None = None, db_path: Path | None = None):
+                 plugins: str | None = None, db_path: Path | None = None, until_quiet: bool = False):
         self.settings, self.log, self.daemon = settings, log, daemon
         self.name, self.port, self.plugins = name, port, plugins
         self.db_path = db_path if db_path is not None else settings.db_path if name else None  # baked when named
+        self.until_quiet = until_quiet  # the page server ends once no page has been in touch for a while
 
     @property
     def installer(self) -> "LogonTask | UserUnit | None":
@@ -272,11 +379,12 @@ class Service:
 
     # -- the service's own process ---------------------------------------------------------------
     def run(self, stop: threading.Event | None = None, open_browser: bool = False, port: int | None = None) -> int:
-        """The service's process: the fetcher's page at its port (lib.front(); `port`, or
-        LIMINAL_FETCHER_PORT; in the browser when `open_browser`: `serve`), the fetcher attached when
-        a page comes and let go once none has been in touch for a while, and as the daemon the fetcher
-        held for good: attached (started if none answers), attached again once it ends. Until this
-        process is told to stop (SIGINT, SIGTERM, Ctrl+C: the page down, the fetcher let go)."""
+        """The service's process: the integrator's page and data API served here (lib.page(); `port`,
+        or LIMINAL_FETCHER_PORT; in the browser when `open_browser`: `serve`), the fetcher attached
+        through a FetcherLink when a page comes and let go once none has been in touch for a while,
+        and as the daemon the fetcher held for good: attached (started if none answers), attached
+        again once it ends. Until this process is told to stop (SIGINT, SIGTERM, Ctrl+C: the page
+        down, the fetcher let go), or, with `until_quiet`, until no page has been in touch for a while."""
         settings, log, daemon = self.settings, self.log, self.daemon
         stop = stop or threading.Event()
         port = self.port if port is None else port
@@ -298,10 +406,14 @@ class Service:
             log("service: LIMINAL_FETCHER_PORT is off (no page) and the fetcher is not held (--daemon): nothing to run")
             return 2
         if port is not None:
-            threading.Thread(target=lib.front(), kwargs={"db_path": settings.db_path, "port": port, "open_browser": open_browser,
-                                                         "log": log, "mode": "fetcher", "stop": stop},
+            link = FetcherLink(settings.db_path, log)
+            threading.Thread(target=lib.page(), args=(settings, port),
+                             kwargs={"link": link, "open_browser": open_browser, "log": log, "stop": stop,
+                                     "rescan": not os.environ.get("LIMINAL_NO_RESCAN"), "reload_settings": lib.config.load_settings,
+                                     "until_quiet": self.until_quiet and not daemon},
                              name="service-page", daemon=True).start()
-            log(f"service: the fetcher's page at {page_url(port)}; the fetcher runs while a page is in touch")
+            log(f"service: the integrator's page and data API at {page_url(port)}; the fetcher runs while a page is in touch"
+                + ("; this server ends once no page has been in touch for a while" if self.until_quiet and not daemon else ""))
         if not daemon:
             log("service: up until told to stop (Ctrl+C, a stop)")
             while not stop.wait(CHECK_SECONDS):
@@ -342,7 +454,8 @@ def status(settings, log: Log = print, name: str = "") -> int:
 
 
 def run(settings, log: Log = print, stop: threading.Event | None = None, open_browser: bool = False,
-        port: int | None = None, daemon: bool = False) -> int:
+        port: int | None = None, daemon: bool = False, until_quiet: bool = False) -> int:
     """The service's process here (Service.run): `serve`, `service run` (its name, database and
-    plugins applied to the process already: cli.apply_instance)."""
-    return Service(settings, log, daemon, fetcher.instance_name()).run(stop, open_browser, port)
+    plugins applied to the process already: cli.apply_instance); `until_quiet`: `serve
+    --until-quiet`, the server ending once no page has been in touch for a while."""
+    return Service(settings, log, daemon, fetcher.instance_name(), until_quiet=until_quiet).run(stop, open_browser, port)

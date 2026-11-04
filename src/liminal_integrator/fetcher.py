@@ -9,11 +9,13 @@ for database access"; "so the app needs to funnel requests through the fetcher t
 to do".
 
 The fetcher runs as the resident host `fetcher` (liminal_libs.host): one per database, up while
-someone holds it (the chart app while a page is in touch, `liminal-integrator serve` or the app's
-`sync` by hand, a service that holds it for good: service.py) and gone once nobody does. It owns
-the databases: the data API (the app's, liminal.gui.server) answers on its local port, where its
-own page shows the data (the monitoring views, the plugins, the exchanges, the news, the globe);
-the chart app is a front that funnels every request of its pages to it.
+someone holds it (the integrator's page server while a page is in touch, `liminal-integrator serve`
+or the app's `sync` by hand, a service that holds it for good: service.py) and gone once nobody
+does. It owns the databases' writes, over its pipe alone: the page and the data API are served by
+the integrator's own process (service.py, lib.page(): the monitoring views, the plugins, the
+exchanges, the news, the globe) at LIMINAL_FETCHER_PORT, and the chart app is a front that funnels
+every request of its pages there (the user, 2026-11-03: "for the webserver / ports, i just
+integrator, and charts": two listeners on the machine).
 
 Its work (Fetcher.run), between ticks of TICK_SECONDS while it is up:
 - the requests (liminal_libs.storage.requests): the newest ask first, then its standing work in
@@ -584,14 +586,19 @@ class Fetcher:
         lib.write_status(store, st)
 
 
+def page_url_of(port: int | None) -> str | None:
+    """Where the integrator serves its page and the data API (service.py): None without a port."""
+    return f"http://127.0.0.1:{port}/" if port else None
+
+
 def run_host(settings, log: Log | None = None, port: int | None = None, rescan: bool | None = None) -> str:
-    """The fetcher's process: the host `fetcher` of this database, the fetcher's work under it,
-    its page and the data API (the app's) on `port` (page_port() by default). Returns why the host
-    stopped (its clients gone)."""
+    """The fetcher's process: the host `fetcher` of this database and the fetcher's work under it,
+    over its pipe alone (no HTTP: the integrator's own process serves the page and the data API at
+    `port`, LIMINAL_FETCHER_PORT by default, which the status names). `rescan` is the integrator's
+    page server's now (kept for the callers). Returns why the host stopped (its clients gone)."""
     log = log or lib.log_to(settings.db_path)
     h = lib.Host(HOST, settings.db_path, log=log)
     f = Fetcher(settings, log)
-    serve_fetcher = lib.page()
-    return serve_fetcher(settings, f, h, port=page_port() if port is None else port,
-                         rescan=(not os.environ.get("LIMINAL_NO_RESCAN")) if rescan is None else rescan,
-                         reload_settings=lib.config.load_settings)
+    f.host = h
+    f.page_url = page_url_of(page_port() if port is None else port)
+    return h.serve(f.run, handle=f.handle)

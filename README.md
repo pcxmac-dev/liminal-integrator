@@ -10,10 +10,11 @@ its pages to it; the library both build on is [liminal-libs](https://github.com/
   holds the runs of the feeds that deliver it until each has served the symbol.
 - A standing pass, hourly while it is up and only once new data can exist (the feeds' calendars and
   publication delays): every feed's run, the closed months' copy, the extras.
-- Its page (the data and monitoring views of the chart app, without the chart) at
-  `http://127.0.0.1:8785/`, kept there by `liminal-integrator serve` or the service you install at
-  your logon, like the chart app at `http://127.0.0.1:8765/`; the fetcher itself runs while a page is
-  in touch, started when one comes and let go once none has been for a while.
+- Its page and data API (the data and monitoring views of the chart app, without the chart) at
+  `http://127.0.0.1:8785/`, served by `liminal-integrator serve` or the service you install at your
+  logon, like the chart app's front at `http://127.0.0.1:8765/` (two listeners on the machine: the
+  chart app's pages get their data through this one); the fetcher itself runs while a page is in
+  touch, started when one comes and let go once none has been for a while.
 - A daemon when you want one (`--daemon`, on `serve` or `service install`): the fetcher held for good
   and started again if it ends, so it collects what it can on its own.
 - Every plugin found, or the ones you name (`--plugins twse,tiingo`; `--plugins none` for none at all):

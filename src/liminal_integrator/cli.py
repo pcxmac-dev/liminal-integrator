@@ -1,6 +1,7 @@
 """The integrator's command line: `liminal-integrator serve|status|request|pass|cancel|host` and
 `liminal-integrator service install|remove|status|run`, `--daemon` on serve, install and run for
-the fetcher held for good; `--plugins` for the plugins loaded (names, or none); `--name` (with
+the fetcher held for good; `--until-quiet` on serve for a server that ends once no page has been in
+touch for a while; `--plugins` for the plugins loaded (names, or none); `--name` (with
 `--db`, `--port`) for an integrator of its own, on its own database. The app's own command line
 answers the same (`liminal-charts fetcher ...`, `liminal-charts service ...`), through here."""
 from __future__ import annotations
@@ -14,9 +15,10 @@ from . import fetcher, lib, service
 
 
 def cmd_fetcher(args, settings) -> int:
-    """`serve` keeps the fetcher's page here at its port (LIMINAL_FETCHER_PORT, 8785), open in the
-    browser, the fetcher running while a page is in touch, or with `--daemon` held for good so it
-    collects what it can on its own (service.py), until Ctrl+C; `status` shows its stack and state;
+    """`serve` serves the integrator's page and data API here at its port (LIMINAL_FETCHER_PORT, 8785),
+    open in the browser, the fetcher running while a page is in touch, or with `--daemon` held for
+    good so it collects what it can on its own (service.py), until Ctrl+C (`--until-quiet`: or until
+    no page has been in touch for a while); `status` shows its stack and state;
     `request SYMBOL...` asks it for symbols; `pass` asks for a standing pass now; `cancel --id N`
     takes a request back; `host` runs a fetcher here, in the foreground, nothing holding it."""
     log = lib.log_to(settings.db_path)
@@ -24,7 +26,8 @@ def cmd_fetcher(args, settings) -> int:
         fetcher.run_host(settings, log, port=args.port)
         return 0
     if args.action == "serve":
-        return service.run(settings, log, open_browser=not args.no_browser, port=args.port, daemon=args.daemon)
+        return service.run(settings, log, open_browser=not args.no_browser, port=args.port, daemon=args.daemon,
+                           until_quiet=bool(getattr(args, "until_quiet", False)))
     if args.action == "status":
         with lib.Store(settings.db_path) as store:
             status = lib.read_status(store)
@@ -148,6 +151,9 @@ def add_fetcher_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--daemon", action="store_true",
                    help="serve: hold the fetcher for good as well, so it collects what it can on its own; otherwise it "
                         "runs only while a page is in touch")
+    p.add_argument("--until-quiet", action="store_true",
+                   help="serve: end once no page has been in touch for LIMINAL_QUIET_SECONDS (what the chart app's "
+                        "front starts for itself when nothing answers at the integrator's port)")
     add_instance_arguments(p, "serve, host")
 
 
