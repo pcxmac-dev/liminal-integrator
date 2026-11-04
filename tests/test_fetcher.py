@@ -109,7 +109,7 @@ def test_a_symbol_is_assessed_under_its_stored_ticker_however_it_is_typed(settin
 
 def test_a_listing_abroad_goes_to_the_feeds_carrying_its_exchange_and_to_none_otherwise(settings, monkeypatch):
     known = lib.providers()
-    monkeypatch.setitem(known, "tiingo", replace(known["tiingo"], exchanges=frozenset({"US", "XSHG", "XSHE"})))
+    monkeypatch.setitem(known, "tiingo", known["tiingo"].with_(exchanges=frozenset({"US", "XSHG", "XSHE"})))
     with lib.Store(settings.db_path) as store:
         a = fetcher.assess(store, settings, "600519.SS", now=NOW)  # Shanghai: Tiingo carries it, Massive does not
         assert a.symbol == "600519.SS" and a.asset == "stock" and a.feeds == ["tiingo"] and a.note == ""
