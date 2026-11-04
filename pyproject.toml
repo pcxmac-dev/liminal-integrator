@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "liminal-integrator"
-version = "1.2.3"  # the integrator's own release (CHANGELOG.md)
+version = "1.3.0"  # the integrator's own release (CHANGELOG.md)
 description = "The Liminal integrator: the fetcher, which takes requests for symbols, assesses the work over the plugins and collects, and serves the data; a service when you want it to."
 readme = "README.md"
 requires-python = ">=3.10"
 # the library it calls (lib.py), and the app for the page and data API it serves (liminal_app.gui.server)
-dependencies = ["liminal-lib>=1.2.0", "liminal-app"]
+dependencies = ["liminal-lib>=1.3.0", "liminal-app"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

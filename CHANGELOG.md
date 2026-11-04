@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0 (2026-11-03)
+
+On liminal-lib 1.3.0 (the class contract, plugin API 2.0: a plugin's capability scan asked for with
+`has_scan`). The fetcher's assessment is a class, `fetcher.Assessor(store, settings, now)`: the feed
+profiles read once a tick for every request taken and for the standing pass's `next_due`; `assess()`
+stays, one assessment on its own. The service is `service.Service(settings, log, daemon)` with
+`LogonTask` (Windows) and `UserUnit` (Linux) as its installers; `install`, `remove`, `status` and `run`
+stay as the command line's functions. CI tests against the library's and the app's `release/0.2.0`.
+
 ## 1.2.3 (2026-11-03)
 
 A listing abroad's plan is one job per feed and resolution, from the feed's earliest era on: the delivery scheme's

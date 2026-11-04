@@ -116,75 +116,93 @@ class Assessment:
                 "feeds": self.feeds, "live": self.live, "note": self.note, "retired": self.retired}
 
 
-def assess(store, settings, symbol: str, kinds=("bars",), now: datetime | None = None) -> Assessment:
-    """Assess the work for `symbol` (as typed: SPCX::NASDAQ, EUR/USD, TSE:7203; the assessment is
-    under the stored ticker, SPCX, EURUSD, 7203.T) over the plugins set up here. A symbol nobody
-    watches yet goes on the watchlist of every feed that can collect it first; then each feed's
-    offers for its asset class (the standing scheme's), and the plan's jobs to the feeds holding it."""
-    spec = lib.resolve(symbol)
-    symbol = spec.ticker
-    now = now or datetime.now(timezone.utc)
-    today = now.astimezone(lib.ET).date()
-    profiles = {n: p for n, p in lib.feed_profiles(settings).items() if p.assets}
-    rows = store.watchlist(ticker=symbol)
-    if not rows:
-        for name, p in profiles.items():
-            if spec.asset in p.assets and lib.supports(name, spec):
-                store.watch_spec(name, spec)
+class Assessor:
+    """What the plugins set up here can do for a symbol, and when any of them can have new data: the
+    feed profiles (lib.feed_profiles) read once for a moment, with the store and the settings; one
+    per tick of the fetcher (take_requests, standing_pass), one per command."""
+
+    def __init__(self, store, settings, now: datetime | None = None):
+        self.store, self.settings = store, settings
+        self.now = now or datetime.now(timezone.utc)
+        self.profiles = {n: p for n, p in lib.feed_profiles(settings).items() if p.assets}
+
+    def assess(self, symbol: str, kinds=("bars",)) -> Assessment:
+        """Assess the work for `symbol` (as typed: SPCX::NASDAQ, EUR/USD, TSE:7203; the assessment is
+        under the stored ticker, SPCX, EURUSD, 7203.T) over the plugins set up here. A symbol nobody
+        watches yet goes on the watchlist of every feed that can collect it first; then each feed's
+        offers for its asset class (the standing scheme's), and the plan's jobs to the feeds holding it."""
+        store, now, profiles = self.store, self.now, self.profiles
+        spec = lib.resolve(symbol)
+        symbol = spec.ticker
+        today = now.astimezone(lib.ET).date()
         rows = store.watchlist(ticker=symbol)
-    if not rows:
-        abroad = spec.asset == "stock" and lib.is_foreign(spec.exchange)
-        return Assessment(symbol, None, note=f"no feed set up here carries {spec.exchange} listings" if abroad
-                          else "no feed set up here collects it")
-    asset = rows[0]["asset"]
-    # A retired symbol (no longer listed) is held too: the user, 2026-11-02: "if however, the retired
-    # stock data is still available on any of the sources, complete the retired symbol". Its feeds'
-    # runs fill what history they still have and ask for nothing after its last listed day
-    # (collector.retired_end); the app asks for it only while some feed's history is incomplete.
-    retired = max((str(r["retired_on"]) for r in rows if r.get("retired_on")), default=None) \
-        if all(r.get("retired_on") for r in rows) else None
-    holding = [r["source"] for r in rows
-               if r["source"] in profiles and asset in profiles[r["source"]].assets and r.get("closed_at") is None]
-    scheme = lib.sourcing.standing(store, profiles, now)
-    offers = []
-    for o in scheme.offers:
-        if o.asset != asset or o.source not in holding:
-            continue
-        years = max((today - o.since).days, 0) / 365.25
-        offers.append({"plugin": o.source, "resolution": o.resolution, "market": o.market, "since": o.since.isoformat(),
-                       "latency": o.latency, "requests": round(o.requests(years), 1), "capacity": round(o.capacity, 1)})
-    jobs = []
-    for e in scheme.eras:
-        if e.asset != asset:
-            continue
-        first = next((s for s in e.sources if s in holding), None)
-        if first is None:
-            continue
-        jobs.append({"plugin": first, "resolution": e.resolution, "market": e.market, "start": e.start.isoformat(),
-                     "end": e.end.isoformat() if e.end else None, "unique": e.unique,
-                     "days": round(e.days.get(first, 0.0), 3)})
-    if spec.asset == "stock" and lib.is_foreign(spec.exchange):
-        # a listing abroad: the eras are the US market's cuts between feeds that do not carry it, so
-        # each holding feed's work is one job per resolution, from its earliest era on (600519.SS on
-        # Tiingo showed three day eras cut at Massive's and Alpaca's starts: 2026-11-03)
-        merged: dict[tuple, dict] = {}
-        for j in jobs:
-            key = (j["plugin"], j["resolution"], j["market"])
-            was = merged.get(key)
-            if was is None:
-                merged[key] = {**j, "unique": True}
-            else:
-                was["start"] = min(was["start"], j["start"])
-                was["end"] = None if was["end"] is None or j["end"] is None else max(was["end"], j["end"])
-                was["days"] = round(was["days"] + j["days"], 3)
-        jobs = list(merged.values())
-    order = {r: i for i, r in enumerate(lib.sourcing.JOBS)}
-    jobs.sort(key=lambda j: (order.get(j["resolution"], len(order)), j["start"]))
-    feeds = list(dict.fromkeys(j["plugin"] for j in jobs))
-    live = [[s, w] for s, w in scheme.live.get(asset, []) if s in holding and not retired] if "live" in kinds else []
-    note = "" if feeds else ("no plugin set up here delivers its history" if holding
-                             else "its feeds are closed, or not set up here")
-    return Assessment(symbol, asset, offers, jobs, feeds, live, note, retired)
+        if not rows:
+            for name, p in profiles.items():
+                if spec.asset in p.assets and lib.supports(name, spec):
+                    store.watch_spec(name, spec)
+            rows = store.watchlist(ticker=symbol)
+        if not rows:
+            abroad = spec.asset == "stock" and lib.is_foreign(spec.exchange)
+            return Assessment(symbol, None, note=f"no feed set up here carries {spec.exchange} listings" if abroad
+                              else "no feed set up here collects it")
+        asset = rows[0]["asset"]
+        # A retired symbol (no longer listed) is held too: the user, 2026-11-02: "if however, the retired
+        # stock data is still available on any of the sources, complete the retired symbol". Its feeds'
+        # runs fill what history they still have and ask for nothing after its last listed day
+        # (collector.retired_end); the app asks for it only while some feed's history is incomplete.
+        retired = max((str(r["retired_on"]) for r in rows if r.get("retired_on")), default=None) \
+            if all(r.get("retired_on") for r in rows) else None
+        holding = [r["source"] for r in rows
+                   if r["source"] in profiles and asset in profiles[r["source"]].assets and r.get("closed_at") is None]
+        scheme = lib.sourcing.standing(store, profiles, now)
+        offers = []
+        for o in scheme.offers:
+            if o.asset != asset or o.source not in holding:
+                continue
+            years = max((today - o.since).days, 0) / 365.25
+            offers.append({"plugin": o.source, "resolution": o.resolution, "market": o.market, "since": o.since.isoformat(),
+                           "latency": o.latency, "requests": round(o.requests(years), 1), "capacity": round(o.capacity, 1)})
+        jobs = []
+        for e in scheme.eras:
+            if e.asset != asset:
+                continue
+            first = next((s for s in e.sources if s in holding), None)
+            if first is None:
+                continue
+            jobs.append({"plugin": first, "resolution": e.resolution, "market": e.market, "start": e.start.isoformat(),
+                         "end": e.end.isoformat() if e.end else None, "unique": e.unique,
+                         "days": round(e.days.get(first, 0.0), 3)})
+        if spec.asset == "stock" and lib.is_foreign(spec.exchange):
+            # a listing abroad: the eras are the US market's cuts between feeds that do not carry it, so
+            # each holding feed's work is one job per resolution, from its earliest era on (600519.SS on
+            # Tiingo showed three day eras cut at Massive's and Alpaca's starts: 2026-11-03)
+            merged: dict[tuple, dict] = {}
+            for j in jobs:
+                key = (j["plugin"], j["resolution"], j["market"])
+                was = merged.get(key)
+                if was is None:
+                    merged[key] = {**j, "unique": True}
+                else:
+                    was["start"] = min(was["start"], j["start"])
+                    was["end"] = None if was["end"] is None or j["end"] is None else max(was["end"], j["end"])
+                    was["days"] = round(was["days"] + j["days"], 3)
+            jobs = list(merged.values())
+        order = {r: i for i, r in enumerate(lib.sourcing.JOBS)}
+        jobs.sort(key=lambda j: (order.get(j["resolution"], len(order)), j["start"]))
+        feeds = list(dict.fromkeys(j["plugin"] for j in jobs))
+        live = [[s, w] for s, w in scheme.live.get(asset, []) if s in holding and not retired] if "live" in kinds else []
+        note = "" if feeds else ("no plugin set up here delivers its history" if holding
+                                 else "its feeds are closed, or not set up here")
+        return Assessment(symbol, asset, offers, jobs, feeds, live, note, retired)
+
+    def next_due(self, exchanges: dict[str, set[str]] | None = None) -> datetime | None:
+        """The earliest moment any feed set up here can have new data (next_due)."""
+        return next_due(self.settings, self.profiles, self.now, exchanges)
+
+
+def assess(store, settings, symbol: str, kinds=("bars",), now: datetime | None = None) -> Assessment:
+    """A symbol assessed once (Assessor.assess): the feed profiles read for it alone."""
+    return Assessor(store, settings, now).assess(symbol, kinds)
 
 
 # -- the fetcher ---------------------------------------------------------------------------------
@@ -296,6 +314,7 @@ class Fetcher:
         if paused and paused.get("halt"):
             return
         s = self.settings
+        assessor = None  # the profiles read once for the tick, when a request comes
         while (r := store.request_next(now)) is not None:
             if s.offline or s.read_only:
                 # offline: assessed all the same (no request: the plugins' records and the watchlist), so
@@ -304,7 +323,8 @@ class Fetcher:
                 plan = None
                 if not s.read_only:
                     try:
-                        plan = assess(store, s, r["symbol"], r["kinds"], now).as_dict()
+                        assessor = assessor or Assessor(store, s, now)
+                        plan = assessor.assess(r["symbol"], r["kinds"]).as_dict()
                     except Exception:  # noqa: BLE001 - the plan is a courtesy here
                         plan = None
                 asked = f"; it would ask {', '.join(plan['feeds'])}" if plan and plan.get("feeds") else \
@@ -314,7 +334,8 @@ class Fetcher:
                                             "LIMINAL_READONLY)" + asked)
                 continue
             try:
-                a = assess(store, s, r["symbol"], r["kinds"], now)
+                assessor = assessor or Assessor(store, s, now)
+                a = assessor.assess(r["symbol"], r["kinds"])
             except Exception as e:  # noqa: BLE001 - this request fails; the next goes on
                 store.request_update(r["id"], state="failed", detail=f"could not be assessed: {type(e).__name__}: {e}", now=now)
                 self.log(f"fetcher: {r['symbol']}: could not be assessed: {type(e).__name__}: {e}")
@@ -456,7 +477,8 @@ class Fetcher:
         if None in busy:
             self.log("fetcher: the whole database is locked (its data is being moved): no pass")
             return {"started": [], "why": "the whole database is locked"}
-        profiles = lib.feed_profiles(s)
+        assessor = Assessor(store, s, now)
+        profiles = assessor.profiles  # the feeds set up here
         started, going, unset = [], [], []
         for name in lib.providers():
             if not (profiles.get(name) and profiles[name].assets):
@@ -481,7 +503,7 @@ class Fetcher:
             self.workers = threading.Thread(target=self._run_plugins, name="fetcher-plugins", daemon=True)
             self.workers.start()
         with self.lock:
-            self.next_due = next_due(s, {n: p for n, p in profiles.items() if p.assets}, now, store.watch_exchanges())
+            self.next_due = assessor.next_due(store.watch_exchanges())
         self.log(f"fetcher: pass: {', '.join(started) or 'no feed'} held"
                  + (f"; fetching already: {', '.join(going)}" if going else "")
                  + (f"; not set up here: {', '.join(unset)}" if unset else "")

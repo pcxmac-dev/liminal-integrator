@@ -132,104 +132,169 @@ def _call(args: list[str]) -> int:
     return subprocess.call(args, **lib.proc.no_window())
 
 
-def install(settings, log: Log = print, daemon: bool = False) -> int:
-    runs = f"`liminal-integrator service run{' --daemon' if daemon else ''}`"
-    if sys.platform == "win32":
-        code = _call(task_args("install", daemon))
+class LogonTask:
+    """Windows: the scheduled task at your logon (TASK_NAME), registered, removed and asked through
+    the Task Scheduler cmdlets (task_script, task_args)."""
+
+    def __init__(self, daemon: bool = False):
+        self.daemon = daemon
+
+    def install(self, log: Log) -> int:
+        runs = f"`liminal-integrator service run{' --daemon' if self.daemon else ''}`"
+        code = _call(task_args("install", self.daemon))
         if code == 0:
             _call(task_args("start"))
             log(f"service: the task {TASK_NAME} runs {runs} at your logon, as you (your user environment variables, "
-                f"the keys among them, are its); started now: {_does(daemon)}. `service remove` takes it away.")
+                f"the keys among them, are its); started now: {_does(self.daemon)}. `service remove` takes it away.")
         else:
             log(f"service: the task {TASK_NAME} could not be registered (the Task Scheduler's answer is above)")
         return code
-    if sys.platform.startswith("linux"):
+
+    def remove(self, log: Log) -> int:
+        return _call(task_args("remove"))
+
+    def status(self, log: Log) -> int:
+        return _call(task_args("status"))
+
+
+class UserUnit:
+    """Linux: the systemd user unit (UNIT_NAME, unit_path), written with the database's path
+    (unit_text), enabled and started; removed with its file."""
+
+    def __init__(self, db_path: Path | None = None, daemon: bool = False):
+        self.db_path, self.daemon = db_path, daemon
+
+    def install(self, log: Log) -> int:
         path = unit_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(unit_text(settings.db_path, daemon), encoding="utf-8")
+        path.write_text(unit_text(self.db_path, self.daemon), encoding="utf-8")
         code = _call(["systemctl", "--user", "daemon-reload"]) or _call(["systemctl", "--user", "enable", "--now", UNIT_NAME])
-        log(f"service: the unit {path} is enabled and started: {_does(daemon)}. To run it without a login: "
+        log(f"service: the unit {path} is enabled and started: {_does(self.daemon)}. To run it without a login: "
             f"`loginctl enable-linger {os.environ.get('USER', '')}`. The unit does not see your shell's variables: give "
             "it the keys through the OS keyring or systemd's encrypted credentials (your choice), never a file this "
             "program writes.")
         return code
-    log("service: only Windows (a task at logon) and Linux (a systemd user unit) are supported; "
-        "`liminal-integrator serve` runs it here meanwhile")
-    return 2
 
-
-def remove(settings, log: Log = print) -> int:
-    if sys.platform == "win32":
-        return _call(task_args("remove"))
-    if sys.platform.startswith("linux"):
+    def remove(self, log: Log) -> int:
         code = _call(["systemctl", "--user", "disable", "--now", UNIT_NAME])
         path = unit_path()
         if path.exists():
             path.unlink()
         _call(["systemctl", "--user", "daemon-reload"])
         return code
-    log("service: nothing installed on this platform")
-    return 0
+
+    def status(self, log: Log) -> int:
+        return _call(["systemctl", "--user", "status", UNIT_NAME, "--no-pager"])
+
+
+class Service:
+    """The integrator's service: installed at your logon on this platform (LogonTask on Windows, a
+    UserUnit on Linux; `installer`), removed, asked for its status, or run here (`run`: its page,
+    and the fetcher while a page is in touch, or held for good as the daemon). The module's
+    functions of the same names are these, for the command line."""
+
+    def __init__(self, settings, log: Log = print, daemon: bool = False):
+        self.settings, self.log, self.daemon = settings, log, daemon
+
+    @property
+    def installer(self) -> "LogonTask | UserUnit | None":
+        """What installs it on this platform; None where nothing can (sys.platform, when asked)."""
+        if sys.platform == "win32":
+            return LogonTask(self.daemon)
+        if sys.platform.startswith("linux"):
+            return UserUnit(self.settings.db_path, self.daemon)
+        return None
+
+    def install(self) -> int:
+        installer = self.installer
+        if installer is None:
+            self.log("service: only Windows (a task at logon) and Linux (a systemd user unit) are supported; "
+                     "`liminal-integrator serve` runs it here meanwhile")
+            return 2
+        return installer.install(self.log)
+
+    def remove(self) -> int:
+        installer = self.installer
+        if installer is None:
+            self.log("service: nothing installed on this platform")
+            return 0
+        return installer.remove(self.log)
+
+    def status(self) -> int:
+        installer = self.installer
+        if installer is None:
+            self.log("service: nothing installed on this platform")
+            return 0
+        return installer.status(self.log)
+
+    # -- the service's own process ---------------------------------------------------------------
+    def run(self, stop: threading.Event | None = None, open_browser: bool = False, port: int | None = None) -> int:
+        """The service's process: the fetcher's page at its port (lib.front(); `port`, or
+        LIMINAL_FETCHER_PORT; in the browser when `open_browser`: `serve`), the fetcher attached when
+        a page comes and let go once none has been in touch for a while, and as the daemon the fetcher
+        held for good: attached (started if none answers), attached again once it ends. Until this
+        process is told to stop (SIGINT, SIGTERM, Ctrl+C: the page down, the fetcher let go)."""
+        settings, log, daemon = self.settings, self.log, self.daemon
+        stop = stop or threading.Event()
+
+        def ending(signum, frame) -> None:
+            stop.set()
+
+        for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+            sig = getattr(signal, name, None)
+            if sig is not None:
+                try:
+                    signal.signal(sig, ending)
+                except (ValueError, OSError):
+                    pass  # not the main thread (a test): stopped by its event
+        port = fetcher.page_port() if port is None else port
+        if port is None and not daemon:
+            log("service: LIMINAL_FETCHER_PORT is off (no page) and the fetcher is not held (--daemon): nothing to run")
+            return 2
+        if port is not None:
+            threading.Thread(target=lib.front(), kwargs={"db_path": settings.db_path, "port": port, "open_browser": open_browser,
+                                                         "log": log, "mode": "fetcher", "stop": stop},
+                             name="service-page", daemon=True).start()
+            log(f"service: the fetcher's page at {page_url(port)}; the fetcher runs while a page is in touch")
+        if not daemon:
+            log("service: up until told to stop (Ctrl+C, a stop)")
+            while not stop.wait(CHECK_SECONDS):
+                pass
+            log("service: ended; the page is down, the fetcher let go")
+            return 0
+        log("service: the daemon holds the fetcher for good (it collects what it can on its own; Ctrl+C or a stop lets it go)")
+        while not stop.is_set():
+            att = lib.attach_fetcher(settings.db_path, log=log)
+            if att is None:
+                log(f"service: no fetcher answered; asked again in {RESTART_SECONDS:g} s")
+                stop.wait(RESTART_SECONDS)
+                continue
+            log(f"service: the fetcher is up (pid {att.host_pid})")
+            while not stop.is_set() and att.alive():
+                stop.wait(CHECK_SECONDS)
+            if stop.is_set():
+                att.detach()
+                break
+            log(f"service: the fetcher ended; started again in {RESTART_SECONDS:g} s")
+            stop.wait(RESTART_SECONDS)
+        log("service: ended; the fetcher let go")
+        return 0
+
+
+# -- the command line's: each a Service's --------------------------------------------------------
+def install(settings, log: Log = print, daemon: bool = False) -> int:
+    return Service(settings, log, daemon).install()
+
+
+def remove(settings, log: Log = print) -> int:
+    return Service(settings, log).remove()
 
 
 def status(settings, log: Log = print) -> int:
-    if sys.platform == "win32":
-        return _call(task_args("status"))
-    if sys.platform.startswith("linux"):
-        return _call(["systemctl", "--user", "status", UNIT_NAME, "--no-pager"])
-    log("service: nothing installed on this platform")
-    return 0
+    return Service(settings, log).status()
 
 
-# -- the service's own process -------------------------------------------------------------------
 def run(settings, log: Log = print, stop: threading.Event | None = None, open_browser: bool = False,
         port: int | None = None, daemon: bool = False) -> int:
-    """The service's process: the fetcher's page at its port (lib.front(); `port`, or
-    LIMINAL_FETCHER_PORT; in the browser when `open_browser`: `serve`), the fetcher attached when
-    a page comes and let go once none has been in touch for a while, and with `daemon` the fetcher
-    held for good: attached (started if none answers), attached again once it ends. Until this
-    process is told to stop (SIGINT, SIGTERM, Ctrl+C: the page down, the fetcher let go)."""
-    stop = stop or threading.Event()
-
-    def ending(signum, frame) -> None:
-        stop.set()
-
-    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
-        sig = getattr(signal, name, None)
-        if sig is not None:
-            try:
-                signal.signal(sig, ending)
-            except (ValueError, OSError):
-                pass  # not the main thread (a test): stopped by its event
-    port = fetcher.page_port() if port is None else port
-    if port is None and not daemon:
-        log("service: LIMINAL_FETCHER_PORT is off (no page) and the fetcher is not held (--daemon): nothing to run")
-        return 2
-    if port is not None:
-        threading.Thread(target=lib.front(), kwargs={"db_path": settings.db_path, "port": port, "open_browser": open_browser,
-                                                     "log": log, "mode": "fetcher", "stop": stop},
-                         name="service-page", daemon=True).start()
-        log(f"service: the fetcher's page at {page_url(port)}; the fetcher runs while a page is in touch")
-    if not daemon:
-        log("service: up until told to stop (Ctrl+C, a stop)")
-        while not stop.wait(CHECK_SECONDS):
-            pass
-        log("service: ended; the page is down, the fetcher let go")
-        return 0
-    log("service: the daemon holds the fetcher for good (it collects what it can on its own; Ctrl+C or a stop lets it go)")
-    while not stop.is_set():
-        att = lib.attach_fetcher(settings.db_path, log=log)
-        if att is None:
-            log(f"service: no fetcher answered; asked again in {RESTART_SECONDS:g} s")
-            stop.wait(RESTART_SECONDS)
-            continue
-        log(f"service: the fetcher is up (pid {att.host_pid})")
-        while not stop.is_set() and att.alive():
-            stop.wait(CHECK_SECONDS)
-        if stop.is_set():
-            att.detach()
-            break
-        log(f"service: the fetcher ended; started again in {RESTART_SECONDS:g} s")
-        stop.wait(RESTART_SECONDS)
-    log("service: ended; the fetcher let go")
-    return 0
+    """The service's process here (Service.run): `serve`, `service run`."""
+    return Service(settings, log, daemon).run(stop, open_browser, port)

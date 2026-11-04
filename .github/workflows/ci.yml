@@ -6,8 +6,8 @@ on:
 
 env:
   # the library and the app it is tested against (their branches, until their releases are tagged)
-  LIMINAL_LIB_REF: main
-  LIMINAL_REF: feature/collector
+  LIMINAL_LIB_REF: release/0.2.0
+  LIMINAL_REF: release/0.2.0
 
 jobs:
   test:
