@@ -202,7 +202,7 @@ class Assessor:
             if all(r.get("retired_on") for r in rows) else None
         holding = [r["source"] for r in rows
                    if r["source"] in profiles and asset in profiles[r["source"]].assets and r.get("closed_at") is None]
-        scheme = lib.sourcing.standing(store, profiles, now)
+        scheme = lib.sourcing.Scheme.standing(store, profiles, now)
         offers = []
         for o in scheme.offers:
             if o.asset != asset or o.source not in holding:
@@ -563,7 +563,7 @@ class Fetcher:
 
     def _run_plugins(self) -> None:
         try:
-            out = lib.runner.run_all(lambda: lib.Store(self.db_path, check_same_thread=False), self.settings, self.log)
+            out = lib.runner.Runner(lambda: lib.Store(self.db_path, check_same_thread=False), self.settings, self.log).run()
             for p, o in out.items():
                 self.log(f"fetcher: {p}: " + ", ".join(f"{k} {v}" for k, v in o.items() if v))
         except Exception as e:  # noqa: BLE001 - the plugins' workers failing is theirs

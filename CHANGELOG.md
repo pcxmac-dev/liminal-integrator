@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.1 (2026-11-04)
+
+On liminal-libs 1.5.0's classes (Phase 5 of the object-oriented rewrite): the fetcher's workers for the
+plugins that fetch on their own are `runner.Runner(store_factory, settings, log).run()` (`run_all`
+before), the assessment's delivery scheme `sourcing.Scheme.standing(store, profiles, now)`; the library
+at 1.5.0 or later.
+
 ## 1.6.0 (2026-11-03)
 
 Two listeners on the machine (the user: "for the webserver / ports, i just integrator, and charts"): the
