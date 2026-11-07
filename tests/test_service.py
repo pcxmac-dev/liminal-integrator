@@ -40,9 +40,9 @@ def _fake_page(served: list):
     """A serve_integrator (the charts app's page server) that records what it was asked and stays up
     until told to stop."""
     def serve_integrator(settings, port, *, link, open_browser=False, log=None, stop=None, rescan=False, reload_settings=None,
-                         until_quiet=False):
+                         until_quiet=False, frame=None):
         served.append({"db_path": settings.db_path, "port": port, "open_browser": open_browser, "link": type(link).__name__,
-                       "until_quiet": until_quiet})
+                       "until_quiet": until_quiet, "frame": type(frame).__name__ if frame is not None else None})
         stop.wait()
         served.append("down")
     return serve_integrator
@@ -70,7 +70,8 @@ def test_the_service_keeps_the_page_and_the_fetcher_runs_only_while_a_page_is_in
     stop = threading.Event()
     threading.Timer(0.3, stop.set).start()
     assert service.run(settings, lines.append, stop) == 0
-    assert served[0] == {"db_path": settings.db_path, "port": 8791, "open_browser": False, "link": "FetcherLink", "until_quiet": False}
+    assert served[0] == {"db_path": settings.db_path, "port": 8791, "open_browser": False, "link": "FetcherLink", "until_quiet": False,
+                         "frame": "IntegratorApp"}  # the page's hold on the integrator's plugins
     _down(served)
     assert any("page and data API at http://127.0.0.1:8791/" in m for m in lines) and lines[-1].startswith("service: ended")
     # until quiet (what the chart front starts for itself): the page server is told so

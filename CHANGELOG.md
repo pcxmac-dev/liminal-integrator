@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.0 (2026-11-06)
+
+The integrator as an app of the frame (liminal-libs 1.10.0's `apps.App`; the user: "the app itself
+(either chart or integrator) has plugin ABC as well"; "the plugin ABC will enumerate attached plugins and
+their API"): `app.IntegratorApp` (integrator, the fetcher's scroll icon, port 8785) holds the stock-data
+plugins and the integrator's login, the one authorization interface they read their keys through. The
+fetcher's process attaches them at the host's start (`Fetcher.app`, `Fetcher.login`); the page's process
+holds one too (`serve_integrator(frame=...)`), so the integrator's page answers `GET /api/interface` with
+the plugins attached and their API; the command line reads the settings through the login
+(`load_settings(login=)`). The login is the user environment (`EnvironmentLogin`) until a daemon can hold a
+login session of its own, so no key changes hands differently yet. The library at 1.11.0 or later.
+
 ## 1.6.1 (2026-11-04)
 
 On liminal-libs 1.5.0's classes (Phase 5 of the object-oriented rewrite): the fetcher's workers for the

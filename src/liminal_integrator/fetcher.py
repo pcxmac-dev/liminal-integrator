@@ -257,10 +257,17 @@ def assess(store, settings, symbol: str, kinds=("bars",), now: datetime | None =
 class Fetcher:
     """The fetcher's work and state (one per process: the host `fetcher`)."""
 
-    def __init__(self, settings, log: Log = print, db_path: Path | None = None):
+    def __init__(self, settings, log: Log = print, db_path: Path | None = None, login=None):
+        from .app import IntegratorApp  # app.py imports lib; nothing of the fetcher
+
         self.settings = settings
         self.db_path = Path(db_path or settings.db_path)
         self.log = log
+        # The integrator as an app of the frame (app.py): its plugins, attached at the host's start
+        # (run_host) with its login, the one way to their keys (the user environment until a daemon
+        # holds a login session of its own).
+        self.app = IntegratorApp(log=log, login=login)
+        self.login = self.app.login
         self.stop = threading.Event()
         self.wake = threading.Event()
         self.lock = threading.RLock()
@@ -600,5 +607,7 @@ def run_host(settings, log: Log | None = None, port: int | None = None, rescan: 
     h = lib.Host(HOST, settings.db_path, log=log)
     f = Fetcher(settings, log)
     f.host = h
+    attached = f.app.attach_plugins()  # the stock-data plugins, with the integrator's login
+    log(f"fetcher: {len(attached)} plugins attached: {', '.join(attached) or 'none'}")
     f.page_url = page_url_of(page_port() if port is None else port)
     return h.serve(f.run, handle=f.handle)

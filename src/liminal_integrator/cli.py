@@ -204,5 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(e)
         return 2
-    settings = lib.config.load_settings()
+    # The settings read through the integrator's login (apps.Login, the root authorization): the user
+    # environment until a daemon holds a login session of its own, so nothing changes hands differently yet.
+    settings = lib.config.load_settings(login=lib.EnvironmentLogin())
     return args.func(args, settings)
