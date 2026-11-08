@@ -57,3 +57,22 @@ def no_processes_or_hosts(monkeypatch, tmp_path):
     monkeypatch.setattr(lib, "history_run", lambda db_path, log=print: None)
     monkeypatch.setattr(fetcher.subprocess, "Popen", no_spawn)
     monkeypatch.setattr(subprocess, "Popen", no_spawn)
+
+
+@pytest.fixture(autouse=True)
+def no_real_databases(monkeypatch):
+    """The Databases view's figures never open a real database in a test, nor reach a real MongoDB:
+    its openers refuse (a test gives stand-ins), MongoDB's port answers nothing; a refusal fails the
+    test even where the view would only show it as the database's error."""
+    from liminal_integrator import databases
+
+    refused: list = []
+
+    def refuse(*args, **kw):
+        refused.append(args)
+        raise AssertionError(f"a test opened a real database: {args}")
+    for name in ("connect_sqlite", "connect_duckdb", "mongo_client"):
+        monkeypatch.setattr(databases, name, refuse)
+    monkeypatch.setattr(databases, "port_open", lambda host, port, timeout=0.3: False)
+    yield
+    assert not refused, f"a test opened a real database: {refused}"

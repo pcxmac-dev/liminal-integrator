@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.8.0 (2026-11-08)
+
+The databases themselves on the integrator's page (the user, 2026-11-07: "the integrator will have stats for the
+databases themselves, the platform only cares about hardware"): `databases.py`, answered by the integrator's frame
+(`IntegratorApp.api`: `GET /api/databases`, the list; `GET /api/databases/detail?id=`, one database), shown by the
+charts app's Databases view on the integrator's page (list | the one picked | its specifics, before the rail; the
+charts server passes its frame the routes it does not answer).
+
+- Every SQLite and DuckDB file in the data folder (liminal.db, feeds/, datasets/, gov/, the login's, the backups,
+  an integrator of its own), its size on disk with its -wal and -shm, its growth an hour, when it was last written
+  (the file or its -wal), and each table's rows. A feed's closed months in history/<feed>/ are one entry, their rows
+  from the manifest in the feed's SQLite file (counted when each month was copied), so no month file is opened;
+  a copy going on and a superseded file are said so.
+- A count never scans a large table: counted outright only in a file under 64 MB, or a table its B-tree puts under
+  200,000 rows, within 2 s a database; else SQLite's own statistics (sqlite_stat1) when analysed, or an estimate
+  from 48 random root-to-leaf paths read straight from the file (Knuth's estimator: within 0.4% of the exact count
+  on real files; 139 ms for the 979 GB massive.db's 8.6 billion rows). Any other DuckDB file: its own table
+  statistics (`duckdb_tables().estimated_size`), opened read-only.
+- Liminal's MongoDB only while it already runs (its port checked, then a ping; never started, never attached to
+  its keeper): its databases with dbStats, each collection's count and sizes from `$collStats` (the `collStats`
+  command on a server without it), its version and uptime; not running, its folder's size on disk.
+- Nothing runs for nobody: no thread of its own; the folder listed (stat calls) at most every 5 s while the page
+  asks; a database opened read-only (SQLite `mode=ro` and query-only, DuckDB `read_only`) for the moment its
+  figures are read, one at a time, closed at once, its figures kept a minute; a MongoDB client for one read, closed
+  after. Growth comes from the sizes the page's own asks sample (at most a minute apart, a little over an hour
+  kept): over the last hour, or the span since the page last looked.
+- Tests on stand-ins only (conftest's `no_real_databases`: the real openers refuse, MongoDB's port answers
+  nothing); the service hands its frame the database (`IntegratorApp(db_path=)`).
+
 ## 1.7.0 (2026-11-06)
 
 The integrator as an app of the frame (liminal-libs 1.10.0's `apps.App`; the user: "the app itself

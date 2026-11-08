@@ -412,7 +412,7 @@ class Service:
             threading.Thread(target=lib.page(), args=(settings, port),
                              kwargs={"link": link, "open_browser": open_browser, "log": log, "stop": stop,
                                      "rescan": not os.environ.get("LIMINAL_NO_RESCAN"), "reload_settings": lib.config.load_settings,
-                                     "frame": IntegratorApp(log=log),
+                                     "frame": IntegratorApp(log=log, db_path=settings.db_path),  # its databases: the view's
                                      "until_quiet": self.until_quiet and not daemon},
                              name="service-page", daemon=True).start()
             log(f"service: the integrator's page and data API at {page_url(port)}; the fetcher runs while a page is in touch"

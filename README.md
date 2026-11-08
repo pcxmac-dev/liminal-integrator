@@ -15,6 +15,11 @@ its pages to it; the library both build on is [liminal-libs](https://github.com/
   logon, like the chart app's front at `http://127.0.0.1:8765/` (two listeners on the machine: the
   chart app's pages get their data through this one); the fetcher itself runs while a page is in
   touch, started when one comes and let go once none has been for a while.
+- The databases it keeps, on its page's Databases view (`databases.py`): every SQLite and DuckDB file in
+  `store/data/` with its size on disk, growth an hour, last write and its tables' rows (a large table's from
+  SQLite's statistics or an estimate from its B-tree, never a scan; a feed's DuckDB months from its manifest),
+  and Liminal's MongoDB's databases and collections while it runs (never started to be asked). Each database
+  is opened read-only for the moment its figures are read, and only while the page looks.
 - A daemon when you want one (`--daemon`, on `serve` or `service install`): the fetcher held for good
   and started again if it ends, so it collects what it can on its own.
 - Every plugin found, or the ones you name (`--plugins twse,tiingo`; `--plugins none` for none at all):
