@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.0 (2026-11-15)
+
+The integrator inherits the login (the user, 2026-11-14: "the platform and integrator inherit the login function, they
+are separate login instances, class vs object"): `IntegratorApp.LOGIN`, an object of the login class its frame holds
+(liminal-libs 1.52.0 `App.login_object`), its users the integrator's own (the login's folder `integrator`), answered
+under /login/ at 8785 by its page's server (liminal-charts' serve_integrator): the page is its sign-in until signed in
+there, its lambda at the rail's foot. The data API is not behind it (the chart app's front reads it); nothing is started
+for it and it has no port of its own ("i only want ports for liminal-login ; liminal-platform ; liminal-charts ;
+liminal-integrator"). LIMINAL_INTEGRATOR_LOGIN "none" or "off": none. Tests keep every login off and apart.
+
 ## 1.8.0 (2026-11-08)
 
 The databases themselves on the integrator's page (the user, 2026-11-07: "the integrator will have stats for the

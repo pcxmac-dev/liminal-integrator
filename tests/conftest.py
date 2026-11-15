@@ -8,6 +8,15 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def logins_apart(monkeypatch, tmp_path):
+    """Tests never open the machine's real logins: the login the integrator holds is off (a test that wants it turns it
+    on with a stand-in), and a login a test makes keeps its users in the test's own folder."""
+    monkeypatch.setenv("LIMINAL_INTEGRATOR_LOGIN", "none")
+    monkeypatch.setenv("LIMINAL_CHARTS_LOGIN", "none")
+    monkeypatch.setenv("LIMINAL_LOGIN_DIR", str(tmp_path / "login"))
+
+
+@pytest.fixture(autouse=True)
 def no_saved_keys(monkeypatch):
     """Tests never read the user's saved keys (their user environment variables)."""
     from liminal_libs import config

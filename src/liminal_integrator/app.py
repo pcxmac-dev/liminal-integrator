@@ -27,6 +27,12 @@ class IntegratorApp(lib.App):
     PORT = 8785
     PORT_VAR = "LIMINAL_FETCHER_PORT"
     SYSTEM = "integrator"  # the plugins it holds
+    # the login the integrator inherits (1.9.0; the user, 2026-11-14: "the platform and integrator inherit the login
+    # function, they are separate login instances, class vs object"): an object of the login class this frame holds
+    # (liminal-libs App.login_object), its users the integrator's own, answered under /login/ at the integrator's port by
+    # its page's server (liminal-charts serve_integrator), the page its sign-in until signed in there; the data API is
+    # not behind it (the chart app's front reads it). LIMINAL_INTEGRATOR_LOGIN "none" or "off": none.
+    LOGIN, LOGIN_VAR = True, "LIMINAL_INTEGRATOR_LOGIN"
 
     def __init__(self, log=print, login: lib.Login | None = None, db_path: Path | None = None):
         # A daemon has no browser session: the user environment variables stand in for the login (the
