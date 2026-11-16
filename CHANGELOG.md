@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.10.0 (2026-11-15)
+
+The fetcher beside another installation's on the same database (the user: "If i run integrator on both sides, there
+cannot be any conflicts, so if one symbol is being operated on, the other integrator would have to operate on another
+symbol"). Needs liminal-libs>=1.56.0 (its `claims.py`). With one installation on a database nothing changes.
+- **The runs going are every system's.** The standing pass looked at lock files, which name a process only its own
+  system can look up: from the other system a held run looked dead. It now asks the claims (`claims.feed_runs`) and
+  leaves a feed the other installation is fetching.
+- **A request waits for a feed fetched elsewhere.** Its feed's run is not started here, where it would be refused, and
+  the request says so ("waiting for massive (fetching on linux::Ubuntu)") instead of failing with "its run ended
+  without it". That run reads the same stack and takes the symbol next. If it ends without the symbol, the feed's run
+  is held here.
+- **A fetcher starting takes back only what a fetcher that is gone left.** Each fetcher says it is at work
+  (`claims.present`), and the library's `request_reset` leaves the requests another fetcher is collecting. Until now it
+  reset every one.
+- **A fetcher that is offline or reads only leaves the requests** to a fetcher that can serve them, when one is at
+  work on the database. It used to take each and fail it.
+
 ## 1.9.1 (2026-11-15)
 
 Found running the suite on Linux (the user: "check for bugs in the linux environment"): the systemd user unit
