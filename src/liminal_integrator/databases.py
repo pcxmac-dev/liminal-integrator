@@ -98,9 +98,12 @@ def _quoted(name: str) -> str:
 
 
 # -- the openers (module names, so a test stands them in: tests/conftest.py refuses the real ones) --
-def connect_sqlite(path: Path) -> sqlite3.Connection:
-    """A SQLite file opened read-only (mode=ro, query-only): its writers go on, nothing is written."""
-    conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=1.0, check_same_thread=False)
+def connect_sqlite(path: Path):
+    """A SQLite file opened read-only (mode=ro, query-only): its writers go on, nothing is written. A file on
+    another system's drive is opened by that system (liminal-libs storage/link.py), never from here."""
+    from liminal_libs.storage.link import connect
+
+    conn = connect(path, read_only=True, timeout=1.0, check_same_thread=False)
     conn.execute("PRAGMA query_only=ON")
     return conn
 
@@ -253,15 +256,15 @@ def _without_rowid(sql: str | None) -> bool:
 
 def _count(conn, table: str, deadline: float, clock: Callable[[], float]) -> int | None:
     """COUNT(*) of a table, given up (None) once `deadline` passes."""
+    from liminal_libs.storage.link import time_limit
+
     if clock() >= deadline:
         return None
-    conn.set_progress_handler(lambda: 1 if clock() >= deadline else 0, 20_000)
     try:
-        return int(conn.execute(f"SELECT count(*) FROM {_quoted(table)}").fetchone()[0])
+        with time_limit(conn, deadline - clock(), clock):  # the helper's own limit on a linked file
+            return int(conn.execute(f"SELECT count(*) FROM {_quoted(table)}").fetchone()[0])
     except sqlite3.OperationalError:  # interrupted: too large to count cheaply
         return None
-    finally:
-        conn.set_progress_handler(None, 0)
 
 
 def sqlite_figures(path: Path, size: int, connect: Callable[[Path], object], pages: Callable[[Path, int], PageReader],
