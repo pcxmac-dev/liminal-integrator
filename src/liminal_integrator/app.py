@@ -10,7 +10,11 @@ the App base takes the server over at 0.3.0.
 
 Its own routes (`api`): the databases it keeps, for its page's Databases view (the user, 2026-11-07:
 "the integrator will have stats for the databases themselves, the platform only cares about
-hardware"): `GET /api/databases` the list, `GET /api/databases/detail?id=` one database (databases.py)."""
+hardware"): `GET /api/databases` the list, `GET /api/databases/detail?id=` one database (databases.py);
+and the database plugins' instances (1.12.0; the user, 2026-11-15: "for the integrator i need plugins for
+each type of database ... each instance in the plugin has it's own configuration how it's shared, ports,
+permissions etc"): `GET /api/databases/plugins` every engine's plugin with its instances, `POST
+/api/databases/instances` one of the page's forms answered by its plugin (instances.py)."""
 from __future__ import annotations
 
 import threading
@@ -55,8 +59,11 @@ class IntegratorApp(lib.App):
 
         with self._databases_lock:
             if self._databases is None:
+                from . import instances
+
                 folder = self.db_path.parent if self.db_path is not None else lib.layout.data_dir()
-                self._databases = Databases(folder, log=self.log)
+                # (with the instances its database plugins hold outside the folder: listed with the folder's own)
+                self._databases = Databases(folder, log=self.log, extra=lambda: instances.elsewhere(self))
             return self._databases
 
     def api(self, handler, method: str, path: str, query: dict, body: dict | None):
@@ -70,4 +77,12 @@ class IntegratorApp(lib.App):
                 return 200, self.databases.detail(ident)
             except LookupError as e:
                 raise lib.Refused(HTTPStatus.NOT_FOUND, str(e)) from None
+        if method == "GET" and path == "/api/databases/plugins":
+            from . import instances
+
+            return 200, instances.overview(self)
+        if method == "POST" and path == "/api/databases/instances":
+            from . import instances
+
+            return 200, instances.ask(self, body if isinstance(body, dict) else {})
         return super().api(handler, method, path, query, body)

@@ -12,12 +12,15 @@ from liminal_libs.host import FETCHER, Host, attach_fetcher, feed_run, history_r
 from liminal_libs.host import wait_for_fetcher, wait_for_requests  # noqa: F401
 from liminal_libs.logs import Logger, log_to  # noqa: F401
 from liminal_libs.models import is_foreign  # noqa: F401
+from liminal_libs.mounts import NotHere  # noqa: F401
 from liminal_libs.proc import hold_until_interrupted  # noqa: F401
 from liminal_libs.sessions import ET  # noqa: F401
-from liminal_libs.sources import feed_closed, feed_profiles, providers, supports  # noqa: F401
+from liminal_libs.sources import apis, feed_closed, feed_profiles, providers, supports  # noqa: F401
 from liminal_libs.sources.registry import SELECTION_VAR, plugin_fetchers, plugins_loaded, select, selection  # noqa: F401
+from liminal_libs.sources.registry import databases, errors as plugin_errors  # noqa: F401 - the database plugins (1.61.0)
 from liminal_libs.storage import Store, set_read_only  # noqa: F401
 from liminal_libs.storage.common import Behind  # noqa: F401
+from liminal_libs.storage.databases import ENGINES as DATABASE_ENGINES, Refusal  # noqa: F401
 from liminal_libs.storage.link import LinkError  # noqa: F401
 from liminal_libs.storage.requests import KINDS, OPEN, STATUS_KEY, read_status, write_status  # noqa: F401
 from liminal_libs.stores import history_due  # noqa: F401

@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.12.0 (2026-11-16)
+
+The database plugins' instances on the integrator's page (the user, 2026-11-15: "for the integrator i need plugins for
+each type of database and in each plugin can setup either new databases or connections to existing databases using
+many different types of IP or IPC methods. each instance in the plugin has it's own configuration how it's shared,
+ports, permissions etc"). Needs liminal-libs>=1.61.0 (its database kind: `storage/databases.py`, plugin API 2.3). The
+plugins are packages of their own (plugin-integrator-sqlite, -duckdb, -mongodb); with none installed the page is as it
+was.
+- **The integrator holds the database plugins** (`instances.py`): attached with its login, so what you add to an
+  engine's own instances is kept through it.
+- **`GET /api/databases/plugins`**: every engine's plugin with its instances as the page draws them: what each
+  holds, where it is, the method it is reached by, who else may attach, its state; its API card and what it knows of
+  its engine; and for a plugin's own instances the figures the Databases view already has of the data folder (its
+  files and their size: nothing more is opened). Who is on this database now, by its claims, is listed for the Share
+  form. A database plugin left out when the plugins were loaded is said, with why.
+- **`POST /api/databases/instances`**: one of the page's forms answered by its plugin: test, new, connect, share,
+  port, credentials, forget. A change is made only once the page confirmed it. A refusal that names what accepts it
+  (a server off this machine) goes back with that name, for the page's second question. A password is never logged
+  or echoed, and is taken out of whatever an engine says of its failure.
+- **The Databases view lists the instances too**: a database made in the data folder's `instances/` has a group of
+  its own, and a file connected from outside the data folder is listed with the folder's own, so its tables can be
+  looked into like any other's.
+
 ## 1.11.0 (2026-11-15)
 
 The integrator on a database that another system holds (the suite a second time inside WSL, on Windows' own files).

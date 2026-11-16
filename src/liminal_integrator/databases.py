@@ -80,11 +80,12 @@ GROUPS = (
     ("gov", "Federal", "the federal agencies' items and parameters"),
     ("login", "Login", "the login app's users and their sealed vaults"),
     ("backups", "Backups", "copies kept before a migration"),
+    ("instances", "Instances", "databases made here or connected through a database plugin (its engine's, above)"),
     ("other", "Elsewhere", "elsewhere in the data folder"),
     ("mongodb", "MongoDB", "documents (headlines, filings, releases) where a plugin keeps them in MongoDB"),
 )
 FOLDERS = {"": "main", "feeds": "feeds", "history": "history", "datasets": "datasets", "gov": "gov", "login": "login",
-           "backups": "backups"}
+           "backups": "backups", "instances": "instances"}
 
 Log = Callable[[str], None]
 
@@ -523,14 +524,49 @@ def catalog(root: Path, files: list[tuple[str, int, float]]) -> tuple[list[dict]
     return entries, months
 
 
+def outside(extra: Callable[[], list] | None) -> list[dict]:
+    """The file instances outside the data folder (`extra`: instances.elsewhere) as entries of the list: each file's own
+    figures (its size with its side files, when it was last written). One that is not there, or cannot be read, is
+    left out: its plugin says so in its own place."""
+    try:
+        found = list(extra()) if extra is not None else []
+    except Exception:  # noqa: BLE001 - the folder's own databases are listed without them
+        return []
+    out: list[dict] = []
+    for item in found:
+        path, engine = Path(str(item.get("path") or "")), item.get("engine")
+        if engine not in ("sqlite", "duckdb"):
+            continue
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        side = {}
+        for suffix in SQLITE_SIDE if engine == "sqlite" else DUCKDB_SIDE:
+            try:
+                s = path.with_name(path.name + suffix).stat()
+            except OSError:
+                continue
+            side[suffix] = (s.st_size, s.st_mtime)
+        written = max([st.st_mtime] + [m for suffix, (_, m) in side.items() if suffix in WRITTEN_SIDE])
+        out.append({"id": str(item.get("id")), "name": str(item.get("title") or item.get("name")), "group": "instances",
+                    "engine": engine, "kind": "file", "path": str(path), "size": st.st_size + sum(s for s, _ in side.values()),
+                    "file": st.st_size, "side": {k.lstrip("-."): s for k, (s, _) in side.items()}, "modifiedAt": written,
+                    "plugin": item.get("plugin"), "instance": item.get("name")})
+    return out
+
+
 # -- what the page asks --------------------------------------------------------------------------
 class Databases:
     """The Databases view's figures for one data folder (the integrator's page holds one: app.py)."""
 
     def __init__(self, data_dir: Path, *, sqlite: Callable | None = None, duckdb: Callable | None = None,
                  mongo: Callable | None = None, listening: Callable | None = None, pages: Callable | None = None,
-                 clock: Callable[[], float] = time.time, log: Log = print):
+                 clock: Callable[[], float] = time.time, log: Log = print, extra: Callable[[], list] | None = None):
         self.data_dir = Path(data_dir)
+        # the file instances a database plugin holds outside the data folder (1.12.0; instances.elsewhere): each
+        # {id, name, title, engine, path}, listed with the folder's own so their tables can be looked into
+        self.extra = extra
         self._openers = {"sqlite": sqlite, "duckdb": duckdb, "mongo": mongo, "listening": listening, "pages": pages}
         self.clock = clock
         self.log = log
@@ -558,6 +594,7 @@ class Databases:
             if self._listed is not None and now - self._listed[0] < LIST_S:
                 return self._listed
             entries, months = catalog(self.data_dir, walk(self.data_dir))
+            entries += outside(self.extra)
             mongo_files = walk(self.data_dir / lib.layout.MONGO, skip=set())
             self._mongo_dir = {"size": sum(s for _, s, _ in mongo_files), "files": len(mongo_files),
                                "modifiedAt": max((m for _, _, m in mongo_files), default=None),
@@ -573,6 +610,11 @@ class Databases:
                 e["growth"], e["growthSpan"] = self.growth.rate(e["id"], e["size"], now)
             self._listed = (now, entries, months)
             return self._listed
+
+    def forget(self) -> None:
+        """The listing made again at the next ask (a database was just made, connected or forgotten)."""
+        with self._lock:
+            self._listed = None
 
     def _mongo_now(self) -> dict:
         with self._asking:
