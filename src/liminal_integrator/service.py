@@ -247,8 +247,10 @@ def unit_path(name: str = "") -> Path:
 def unit_text(db_path: Path | None = None, daemon: bool = False, name: str = "", port: int | None = None,
               plugins: str | None = None) -> str:
     """The unit: `liminal-integrator service run` (with the integrator's name, port and plugins),
-    started again on failure, with the database's path (no key: those are yours to give the unit)."""
-    env = f"Environment=LIMINAL_DB={db_path}\n" if db_path else ""
+    started again on failure, with the database's path (no key: those are yours to give the unit). Its words are
+    written as systemd reads them (1.9.1, liminal-libs 1.53.1's systemd.py): bare, a data folder with a space in its
+    name split the database's path in two and the service opened another file."""
+    env = f"Environment={lib.systemd.assignment('LIMINAL_DB', db_path)}\n" if db_path else ""
     what = ("the fetcher held for good, collecting what it can on its own, and its page" if daemon
             else "the fetcher's page, and the fetcher while a page is in touch")
     return (
@@ -256,7 +258,7 @@ def unit_text(db_path: Path | None = None, daemon: bool = False, name: str = "",
         f"Description=Liminal integrator{' ' + name if name else ''}: {what}\n"
         "After=network-online.target\n\n"
         "[Service]\n"
-        f"ExecStart={' '.join(command(daemon, name, None, port, plugins))}\n"
+        f"ExecStart={lib.systemd.command(command(daemon, name, None, port, plugins))}\n"
         f"{env}"
         "Restart=on-failure\n"
         f"RestartSec={RESTART_SECONDS:g}\n"

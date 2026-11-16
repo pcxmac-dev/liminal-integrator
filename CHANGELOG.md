@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.1 (2026-11-15)
+
+Found running the suite on Linux (the user: "check for bugs in the linux environment"): the systemd user unit
+`liminal-integrator service install` writes had its interpreter's and its database's paths bare. systemd splits those
+lines on spaces, so a data folder with a space in its name gave the service half a path and it opened another
+database; a percent sign was read as one of systemd's specifiers. The unit's words are now written as systemd reads
+them (liminal-libs 1.53.1's `systemd.py`). Needs liminal-libs>=1.53.1. Windows' scheduled task is unchanged.
+
 ## 1.9.0 (2026-11-15)
 
 The integrator inherits the login (the user, 2026-11-14: "the platform and integrator inherit the login function, they

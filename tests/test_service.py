@@ -147,7 +147,12 @@ def test_the_windows_task_and_the_systemd_unit(tmp_path, monkeypatch):
     assert service._ps("it's") == "'it''s'"  # a quote in a path doubled, as PowerShell wants it
     unit = service.unit_text(settings.db_path)
     assert "ExecStart=" in unit and "-m liminal_integrator service run\n" in unit and "while a page is in touch" in unit
-    assert f"Environment=LIMINAL_DB={settings.db_path}" in unit
+    assert f"Environment={lib.systemd.assignment('LIMINAL_DB', settings.db_path)}" in unit
+    # 1.9.1: the unit's words as systemd reads them: a data folder with a space in its name stays one path, and a
+    # percent sign in it is not read as a specifier
+    spaced = service.unit_text(Path("/home/me/My Data/50%/liminal.db"))
+    assert 'Environment="LIMINAL_DB=' in spaced and "My Data" in spaced and "50%%" in spaced
+    assert "Environment=LIMINAL_DB=/home/me/My" not in spaced
     assert "Restart=on-failure" in unit and "WantedBy=default.target" in unit
     held = service.unit_text(settings.db_path, daemon=True)
     assert "service run --daemon\n" in held and "held for good" in held
@@ -235,7 +240,8 @@ def test_an_integrator_of_its_own_has_its_name_database_port_and_plugins(tmp_pat
     assert "-TaskName 'LiminalIntegrator'" in service.task_args("status")[-1]
     assert service.unit_path("paper").name == "liminal-integrator-paper.service" and service.unit_path().name == "liminal-integrator.service"
     unit = service.unit_text(db, daemon=False, name="paper", port=8786, plugins="twse")
-    assert f"Environment=LIMINAL_DB={db}" in unit and "service run --name paper --port 8786 --plugins twse\n" in unit
+    assert f"Environment={lib.systemd.assignment('LIMINAL_DB', db)}" in unit
+    assert "service run --name paper --port 8786 --plugins twse\n" in unit
     assert "Description=Liminal integrator paper:" in unit
     # installed as one of its own: the task named for it, its database named outright, its page at its port
     calls: list[list[str]] = []
