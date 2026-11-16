@@ -408,6 +408,7 @@ class Service:
                     signal.signal(sig, ending)
                 except (ValueError, OSError):
                     pass  # not the main thread (a test): stopped by its event
+        failed: list[Exception] = []  # why the page could not be served, when it could not
         port = fetcher.page_port() if port is None else port
         if port is None and not daemon:
             log("service: LIMINAL_FETCHER_PORT is off (no page) and the fetcher is not held (--daemon): nothing to run")
@@ -416,7 +417,19 @@ class Service:
             from .app import IntegratorApp  # the page's hold on the integrator's plugins, with their login
 
             link = FetcherLink(settings.db_path, log, held=not settings.read_only)
-            threading.Thread(target=lib.page(), args=(settings, port),
+
+            def page(**kw) -> None:
+                """The page served until told to stop. One that cannot be served (its database behind this
+                software on another system's drive, that system's helper not reached) ends the service, said:
+                the process used to stay up with no page."""
+                try:
+                    lib.page()(settings, port, **kw)
+                except Exception as e:  # noqa: BLE001 - whatever it was, there is no page: the service ends with it
+                    failed.append(e)
+                    log(f"service: the page could not be served ({type(e).__name__}: {e}); the service ends")
+                    stop.set()
+
+            threading.Thread(target=page,
                              kwargs={"link": link, "open_browser": open_browser, "log": log, "stop": stop,
                                      "rescan": not os.environ.get("LIMINAL_NO_RESCAN"), "reload_settings": lib.config.load_settings,
                                      "frame": IntegratorApp(log=log, db_path=settings.db_path),  # its databases: the view's
@@ -431,6 +444,8 @@ class Service:
             log("service: up until told to stop (Ctrl+C, a stop)")
             while not stop.wait(CHECK_SECONDS):
                 pass
+            if failed:
+                raise failed[0]
             log("service: ended; the page is down, the fetcher let go")
             return 0
         log("service: the daemon holds the fetcher for good (it collects what it can on its own; Ctrl+C or a stop lets it go)")
@@ -448,6 +463,8 @@ class Service:
                 break
             log(f"service: the fetcher ended; started again in {RESTART_SECONDS:g} s")
             stop.wait(RESTART_SECONDS)
+        if failed:
+            raise failed[0]
         log("service: ended; the fetcher let go")
         return 0
 

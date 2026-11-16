@@ -92,6 +92,41 @@ def test_the_service_keeps_the_page_and_the_fetcher_runs_only_while_a_page_is_in
     assert service.run(settings, lines.append, threading.Event()) == 2 and "nothing to run" in lines[-1]
 
 
+def test_a_page_that_cannot_be_served_ends_the_service_and_is_said(tmp_path, monkeypatch, capsys):
+    """The suite inside WSL on a database Windows has not brought up to this version, or before Windows has the
+    library's link: the page's thread ended on it and the process stayed up with no page. It now ends, and the
+    command line says why in the library's words."""
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(lib, "attach_fetcher", _no_hold)
+    monkeypatch.setenv("LIMINAL_FETCHER_PORT", "8791")
+    monkeypatch.setattr(service, "CHECK_SECONDS", 0.01)
+    for why in (lib.Behind("X:/liminal.db is on another system's drive and behind this software (no table claims)"),
+                lib.LinkError("the helper on Windows did not answer (pythonw.exe -m liminal_libs.storage.link)")):
+        def refused(settings, port, why=why, **kw):
+            raise why
+
+        monkeypatch.setattr(lib, "page", lambda refused=refused: refused)
+        lines: list[str] = []
+        for daemon in (False, True):
+            if daemon:
+                monkeypatch.setattr(lib, "attach_fetcher", lambda db_path, log=print: None)  # (none answers: asked again)
+                monkeypatch.setattr(service, "RESTART_SECONDS", 0.01)
+            with pytest.raises(type(why), match=str(why)[:30]):
+                service.run(settings, lines.append, threading.Event(), daemon=daemon)
+            monkeypatch.setattr(lib, "attach_fetcher", _no_hold)
+        assert any(f"the page could not be served ({type(why).__name__}: " in m for m in lines)
+    # at the command line: one line and 2, no traceback
+    monkeypatch.setattr(cli, "apply_instance", lambda args: None)
+    monkeypatch.setattr(cli, "build_parser", lambda: Namespace(parse_args=lambda argv: Namespace(
+        func=lambda args, s: service.run(s, lambda m: None, threading.Event()))))
+    monkeypatch.setattr(lib.config, "load_settings", lambda **kw: settings)
+    assert cli.main(["serve"]) == 2
+    assert "the helper on Windows did not answer" in capsys.readouterr().err
+    from liminal_libs.storage import common
+
+    common.set_read_only(False)  # (the command line set it from the settings)
+
+
 def test_the_daemon_holds_the_fetcher_and_starts_it_again_when_it_ends(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     made: list = []

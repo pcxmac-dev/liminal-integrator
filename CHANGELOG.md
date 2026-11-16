@@ -14,7 +14,10 @@ Needs liminal-libs>=1.57.0 (its link: a SQLite file on another system's drive is
 - **A page that reads only starts and holds no fetcher** (`FetcherLink(held=False)`; `serve --daemon` too): one
   here would have nothing to do. The page shows the status the fetcher that writes on the database left in it.
 - **A database that is behind this software** on another system's drive is said at the command line, in the
-  library's words (`storage.common.Behind`), and left as it is: its own system brings it up to date.
+  library's words (`storage.common.Behind`), and left as it is: its own system brings it up to date. So is a
+  helper that cannot be reached (`storage.link.LinkError`: the other system has no link yet). One line, exit 2.
+- **A page that cannot be served ends the service.** The page's thread ended on such a database and the process
+  stayed up with no page; it now ends with the reason, so whoever keeps it running sees it failed.
 
 ## 1.10.0 (2026-11-15)
 
