@@ -168,6 +168,11 @@ def test_the_fetcher_says_it_is_at_work_and_takes_back_only_what_a_fetcher_that_
         here = [h for h in other.holders(lib.claims.PROCESS) if h.instance != OTHER]
         assert [(h.pid, h.what) for h in here] == [(os.getpid(), fetcher.AT_WORK)]  # seen from the other side
         with lib.Store(settings.db_path) as store:
+            # the feed's run is held first and the request written as collecting right after: waited for, not read
+            # the moment the run shows (on a busy machine it still said "assessing")
+            while (store.request_get(dead)["state"], store.request_get(dead)["pid"]) != ("collecting", os.getpid()) \
+                    and time.monotonic() < end:
+                time.sleep(0.02)
             assert store.request_get(theirs)["state"] == "collecting" and store.request_get(theirs)["pid"] == 77  # left to it
             assert store.request_get(dead)["state"] == "collecting" and store.request_get(dead)["pid"] == os.getpid()  # taken anew
     finally:
