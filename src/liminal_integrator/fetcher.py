@@ -345,7 +345,8 @@ class Fetcher:
             s = self.settings
             if not s.read_only:  # at work here, for whoever else is on this database (nothing written when reading only)
                 here = lib.claims.present(self.db_path, what=NOT_FETCHING if s.offline else AT_WORK, log=self.log)
-            n = store.request_reset()  # only what a fetcher that is gone left: another at work keeps its own
+            # only what a fetcher that is gone left: another at work keeps its own (reading only: nothing is written)
+            n = 0 if s.read_only else store.request_reset()
             if n:
                 self.log(f"fetcher: {n} request(s) left by the fetcher before: waiting again")
             while not self.stop.is_set():
@@ -386,26 +387,25 @@ class Fetcher:
         if paused and paused.get("halt"):
             return
         s = self.settings
-        if (s.offline or s.read_only) and self.fetcher_elsewhere():
+        if s.read_only:
+            return  # reading only (LIMINAL_READONLY): a request is another fetcher's to take; nothing is written here
+        if s.offline and self.fetcher_elsewhere():
             return  # this one could only refuse them: they are left to the fetcher that can serve them
         assessor = None  # the profiles read once for the tick, when a request comes
         while (r := store.request_next(now)) is not None:
-            if s.offline or s.read_only:
+            if s.offline:
                 # offline: assessed all the same (no request: the plugins' records and the watchlist), so
                 # the page shows which feeds would be asked (the user, 2026-11-03: going through the UI
-                # plugin by plugin on an offline copy); reads only: nothing written beyond the request
-                plan = None
-                if not s.read_only:
-                    try:
-                        assessor = assessor or Assessor(store, s, now)
-                        plan = assessor.assess(r["symbol"], r["kinds"]).as_dict()
-                    except Exception:  # noqa: BLE001 - the plan is a courtesy here
-                        plan = None
+                # plugin by plugin on an offline copy)
+                try:
+                    assessor = assessor or Assessor(store, s, now)
+                    plan = assessor.assess(r["symbol"], r["kinds"]).as_dict()
+                except Exception:  # noqa: BLE001 - the plan is a courtesy here
+                    plan = None
                 asked = f"; it would ask {', '.join(plan['feeds'])}" if plan and plan.get("feeds") else \
                     f"; {plan['note']}" if plan and plan.get("note") else ""
                 store.request_update(r["id"], state="failed", plan=plan, now=now,
-                                     detail="nothing fetched: this fetcher is offline or reads only (LIMINAL_OFFLINE, "
-                                            "LIMINAL_READONLY)" + asked)
+                                     detail="nothing fetched: this fetcher is offline (LIMINAL_OFFLINE)" + asked)
                 continue
             try:
                 assessor = assessor or Assessor(store, s, now)
@@ -629,6 +629,8 @@ class Fetcher:
     def write_status(self, store, now: datetime, force: bool = False) -> None:
         """The status into the main file (storage.requests.STATUS_KEY) when it changed, and at least
         every STATUS_EVERY_S while something goes on: every page reads it there."""
+        if self.settings.read_only:
+            return  # reading only: the status in the file is the one of the fetcher that writes there, not this one's
         st = self.status()
         text = json.dumps({k: v for k, v in st.items() if k != "at"}, sort_keys=True)
         due = force or text != self._status_last or (st["busy"] and time.monotonic() - self._status_at >= STATUS_EVERY_S)

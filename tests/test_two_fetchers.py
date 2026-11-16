@@ -199,3 +199,60 @@ def test_a_fetcher_that_is_offline_leaves_the_requests_to_one_that_can_serve_the
     finally:
         other.close()
         store.close()
+
+
+def test_a_fetcher_that_reads_only_writes_nothing(settings, monkeypatch, runs):
+    """LIMINAL_READONLY, as the suite inside WSL first comes in on Windows' database: until then a fetcher that
+    "read only" still wrote its status, took back the requests of a fetcher before it, and marked the waiting ones
+    failed. Now nothing of it reaches the file: a request is the other fetcher's to take, and the status in the
+    file is that fetcher's own."""
+    from liminal_libs.storage import common
+
+    with lib.Store(settings.db_path) as made:  # the database as the fetcher that writes there left it
+        made.watch("massive", ["SPCX"], "minute", exchange="XNAS")
+        r = made.request_put("SPCX", by="chart", now=NOW)
+        lib.write_status(made, {"busy": False, "by": "the fetcher that writes"})
+    monkeypatch.setattr(common, "_READ_ONLY", [True])  # (the integrator's command line sets it: cli.main)
+    monkeypatch.setattr(fetcher, "TICK_SECONDS", 0.01)
+    f, log = _fetcher(settings, monkeypatch)
+    f.settings = replace(settings, read_only=True)
+    monkeypatch.setattr(lib.Store, "request_reset", lambda self: pytest.fail("a reset is a write"))
+    stop, changes, tick = threading.Event(), [], f.tick
+
+    def once(store, now):
+        tick(store, now)
+        assert store.conn.execute("PRAGMA query_only").fetchone() == (1,)  # sealed: it could not write if it tried
+        changes.append(store.conn.total_changes)
+        stop.set()
+        f.wake.set()
+
+    monkeypatch.setattr(f, "tick", once)
+    f.run(stop)
+    assert changes == [0] and runs == {} and not [line for line in log if "Error" in line or "readonly" in line]
+    monkeypatch.setattr(common, "_READ_ONLY", [False])
+    with lib.Store(settings.db_path) as after:
+        assert after.request_get(r["id"])["state"] == "waiting"  # left to a fetcher that can serve it
+        assert lib.read_status(after) == {"busy": False, "by": "the fetcher that writes"}
+    assert lib.claims.held(settings.db_path) == []  # nor is it "at work here" for the other side
+
+
+def test_the_command_line_seals_a_process_that_reads_only_and_says_a_database_that_is_behind(monkeypatch, capsys):
+    from liminal_integrator import cli
+    from liminal_libs.storage import common
+
+    monkeypatch.setattr(common, "_READ_ONLY", [False])
+    seen: dict = {}
+
+    def serve(args, settings):
+        seen["sealed"] = common.read_only()
+        if seen.get("behind"):
+            raise lib.Behind("X:/data/liminal.db is on another system's drive and behind this software (no table claims)")
+        return 0
+
+    monkeypatch.setattr(cli, "apply_instance", lambda args: None)
+    monkeypatch.setattr(cli, "build_parser", lambda: Namespace(parse_args=lambda argv: Namespace(func=serve)))
+    monkeypatch.setattr(lib.config, "load_settings", lambda **kw: Namespace(read_only=True))
+    assert cli.main(["serve"]) == 0 and seen["sealed"] is True
+    seen["behind"] = True
+    assert cli.main(["serve"]) == 2  # said in words, no traceback: it is the other system's to bring up to date
+    assert "behind this software (no table claims)" in capsys.readouterr().err

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.11.0 (2026-11-15)
+
+The integrator on a database that another system holds (the suite a second time inside WSL, on Windows' own files).
+Needs liminal-libs>=1.57.0 (its link: a SQLite file on another system's drive is opened by that system alone).
+- **The Databases view** opens each SQLite file through the library's link (`storage.link.connect`, read-only), and
+  its time limit on a count is the link's (`link.time_limit`), so its figures come from the system that holds the
+  files.
+- **A fetcher that reads only writes nothing** (LIMINAL_READONLY, as the suite in WSL first comes in). It used to
+  write its status, take back the requests of a fetcher before it, and mark the waiting requests failed. Now a
+  request is another fetcher's to take, the status in the file stays that fetcher's own, and the command line seals
+  every store the process opens (`storage.set_read_only`), as the charts' does.
+- **A database that is behind this software** on another system's drive is said at the command line, in the
+  library's words (`storage.common.Behind`), and left as it is: its own system brings it up to date.
+
 ## 1.10.0 (2026-11-15)
 
 The fetcher beside another installation's on the same database (the user: "If i run integrator on both sides, there
