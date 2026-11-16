@@ -206,10 +206,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     # The settings read through the integrator's login (apps.Login, the root authorization): the user
     # environment until a daemon holds a login session of its own, so nothing changes hands differently yet.
-    settings = lib.config.load_settings(login=lib.EnvironmentLogin())
-    lib.set_read_only(settings.read_only)  # LIMINAL_READONLY: every store this process opens reads only
     try:
+        settings = lib.config.load_settings(login=lib.EnvironmentLogin())
+        lib.set_read_only(settings.read_only)  # LIMINAL_READONLY: every store this process opens reads only
         return args.func(args, settings)
-    except lib.Behind as e:  # a database on another system's drive that this software is ahead of: said, not altered
-        print(e, file=sys.stderr)
+    except (lib.Behind, lib.LinkError) as e:  # a database on another system's drive that this software is ahead of
+        print(e, file=sys.stderr)  # (said, not altered), or one whose own system cannot be reached to open it
         return 2

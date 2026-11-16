@@ -18,6 +18,7 @@ from liminal_libs.sources import feed_closed, feed_profiles, providers, supports
 from liminal_libs.sources.registry import SELECTION_VAR, plugin_fetchers, plugins_loaded, select, selection  # noqa: F401
 from liminal_libs.storage import Store, set_read_only  # noqa: F401
 from liminal_libs.storage.common import Behind  # noqa: F401
+from liminal_libs.storage.link import LinkError  # noqa: F401
 from liminal_libs.storage.requests import KINDS, OPEN, STATUS_KEY, read_status, write_status  # noqa: F401
 from liminal_libs.stores import history_due  # noqa: F401
 from liminal_libs.symbols import resolve  # noqa: F401

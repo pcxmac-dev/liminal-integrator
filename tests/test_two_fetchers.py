@@ -256,3 +256,9 @@ def test_the_command_line_seals_a_process_that_reads_only_and_says_a_database_th
     seen["behind"] = True
     assert cli.main(["serve"]) == 2  # said in words, no traceback: it is the other system's to bring up to date
     assert "behind this software (no table claims)" in capsys.readouterr().err
+
+    def unreachable(**kw):
+        raise lib.LinkError("the helper on Windows did not answer (pythonw.exe -m liminal_libs.storage.link)")
+
+    monkeypatch.setattr(lib.config, "load_settings", unreachable)  # (the settings are asked of the helper first)
+    assert cli.main(["serve"]) == 2 and "the helper on Windows did not answer" in capsys.readouterr().err
