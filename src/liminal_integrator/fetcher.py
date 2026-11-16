@@ -65,6 +65,12 @@ STATUS_EVERY_S = 30.0  # the status written at least this often while something 
 Log = Callable[[str], None]
 
 
+# What a fetcher that can serve requests says of itself on its database (claims.present): another installation's
+# fetcher there (the suite inside WSL, on Windows' database) cannot look this process up, and reads this instead
+AT_WORK = "the fetcher"
+NOT_FETCHING = "the fetcher (offline or reading only)"
+
+
 def pass_hours() -> float:
     try:
         return float(lib.config.setting("LIMINAL_SYNC_HOURS") or PASS_HOURS)
@@ -332,10 +338,14 @@ class Fetcher:
         if stop is not None:
             self.stop = stop
         store = lib.Store(self.db_path, check_same_thread=False)
+        here = None
         try:
             name = instance_name()
             self.log(f"fetcher{' ' + name if name else ''}: {plugins_line(plugins_state())}")
-            n = store.request_reset()
+            s = self.settings
+            if not s.read_only:  # at work here, for whoever else is on this database (nothing written when reading only)
+                here = lib.claims.present(self.db_path, what=NOT_FETCHING if s.offline else AT_WORK, log=self.log)
+            n = store.request_reset()  # only what a fetcher that is gone left: another at work keeps its own
             if n:
                 self.log(f"fetcher: {n} request(s) left by the fetcher before: waiting again")
             while not self.stop.is_set():
@@ -352,6 +362,11 @@ class Fetcher:
                 self.write_status(store, datetime.now(timezone.utc), force=True)
             except Exception:  # noqa: BLE001 - the status is a courtesy at the end
                 pass
+            if here is not None:
+                try:
+                    lib.claims.release(self.db_path, here)
+                except Exception:  # noqa: BLE001 - given back at exit all the same
+                    pass
             store.close()
 
     def tick(self, store, now: datetime) -> None:
@@ -371,6 +386,8 @@ class Fetcher:
         if paused and paused.get("halt"):
             return
         s = self.settings
+        if (s.offline or s.read_only) and self.fetcher_elsewhere():
+            return  # this one could only refuse them: they are left to the fetcher that can serve them
         assessor = None  # the profiles read once for the tick, when a request comes
         while (r := store.request_next(now)) is not None:
             if s.offline or s.read_only:
@@ -402,20 +419,29 @@ class Fetcher:
                 self.log(f"fetcher: {r['symbol']}: {a.note or 'nothing to collect'}")
                 continue
             lib.collector.request_priority(store, a.symbol, now)
-            held = [name for name in a.feeds if self.hold_feed(name)]
-            detail = f"on {', '.join(held)}" if held else "no feed's run could be started"
+            # a feed another installation is fetching is not started here (its run would be refused): that run
+            # reads the same stack and takes the symbol next
+            away = self.feeds_elsewhere()
+            there = [name for name in a.feeds if name in away]
+            held = [name for name in a.feeds if name not in away and self.hold_feed(name)]
+            detail = f"on {', '.join(held)}" if held else "" if there else "no feed's run could be started"
+            if there:
+                detail += ("; " if detail else "") + ", ".join(f"{name} fetching on {away[name].instance}" for name in there)
             if a.retired:
                 detail += f" (retired since {a.retired}: its history completed, no new data asked for)"
             store.request_update(r["id"], state="collecting", plan=a.as_dict(), detail=detail, now=now)
             with self.lock:
                 self.active[r["id"]] = {"symbol": a.symbol, "feeds": a.feeds, "asked": now, "asked_iso": r["asked_at"],
-                                        "since": time.monotonic(), "detail": detail}
+                                        "since": time.monotonic(), "detail": detail, "away": set(there)}
             self.log(f"fetcher: {a.symbol} ({r['by']}): {', '.join(a.feeds)} asked for it first"
                      + (f"; live from {a.live[0][0]}" if a.live else ""))
 
     def check_active(self, store, now: datetime) -> None:
         """Each request being collected: done once every feed of its plan has served the symbol
-        (synced since it was asked), or its run has ended; failed when none served it."""
+        (synced since it was asked), or its run has ended; failed when none served it. A feed another
+        installation is fetching is waited for: its run there serves the symbol from the same stack; if
+        that run ends without it, the feed's run is held here."""
+        away = self.feeds_elsewhere() if self.active else {}
         for rid, a in list(self.active.items()):
             r = store.request_get(rid)
             if r is None or r["state"] != "collecting":  # cancelled, or gone
@@ -426,19 +452,27 @@ class Fetcher:
                 a["asked"], a["asked_iso"] = now, r["asked_at"]
                 lib.collector.request_priority(store, a["symbol"], now)
                 for name in a["feeds"]:
-                    self.hold_feed(name)
+                    if name not in away:
+                        self.hold_feed(name)
             served, ended, pending = [], [], []
             for name in a["feeds"]:
                 row = next(iter(store.watchlist(name, a["symbol"])), None)
                 synced = _aware(row["synced_at"]) if row is not None else None
                 if synced is not None and synced >= a["asked"]:
                     served.append(name)
+                elif name in away:  # the other installation's run of the feed: pending, not ended
+                    a.setdefault("away", set()).add(name)
+                    pending.append(name)
+                elif name in a.get("away", ()):  # its run there ended without the symbol: this fetcher's to run now
+                    a["away"].discard(name)
+                    (pending if self.hold_feed(name) else ended).append(name)
                 elif name not in self.feeds or not self._alive(self.feeds[name]):
                     ended.append(name)
                 else:
                     pending.append(name)
             if pending and time.monotonic() - a["since"] < SERVE_TIMEOUT_S:
-                detail = (f"served by {', '.join(served)}; " if served else "") + f"waiting for {', '.join(pending)}"
+                waited = ", ".join(f"{n} (fetching on {away[n].instance})" if n in away else n for n in pending)
+                detail = (f"served by {', '.join(served)}; " if served else "") + f"waiting for {waited}"
                 if detail != a.get("detail"):
                     a["detail"] = detail
                     store.request_update(rid, detail=detail)
@@ -451,6 +485,17 @@ class Fetcher:
             with self.lock:
                 self.active.pop(rid, None)
             self.log(f"fetcher: {a['symbol']}: {detail}")
+
+    # -- the other installations on this database ----------------------------------------------
+    def feeds_elsewhere(self) -> dict:
+        """The feeds another installation on this database is fetching now: {feed: who} (its claims)."""
+        prefix = lib.claims.FEED
+        return {h.key[len(prefix):]: h for h in lib.claims.held(self.db_path, prefix, elsewhere=True)}
+
+    def fetcher_elsewhere(self) -> bool:
+        """Whether another installation's fetcher that can serve requests is at work on this database."""
+        return any(h.what == AT_WORK and h.quiet < lib.claims.STALE_S
+                   for h in lib.claims.held(self.db_path, lib.claims.PROCESS, elsewhere=True))
 
     # -- the feeds' runs -----------------------------------------------------------------------
     @staticmethod
@@ -530,7 +575,7 @@ class Fetcher:
         if paused:
             self.log("fetcher: fetching is " + ("halted" if paused.get("halt") else "paused") + ": no pass")
             return {"started": [], "why": "halted" if paused.get("halt") else "paused"}
-        busy = lib.proc.run_holders(self.db_path)
+        busy = lib.claims.feed_runs(self.db_path)  # every system's runs on this database, not this one's alone
         if None in busy:
             self.log("fetcher: the whole database is locked (its data is being moved): no pass")
             return {"started": [], "why": "the whole database is locked"}
