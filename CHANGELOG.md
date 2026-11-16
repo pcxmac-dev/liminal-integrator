@@ -11,6 +11,8 @@ Needs liminal-libs>=1.57.0 (its link: a SQLite file on another system's drive is
   write its status, take back the requests of a fetcher before it, and mark the waiting requests failed. Now a
   request is another fetcher's to take, the status in the file stays that fetcher's own, and the command line seals
   every store the process opens (`storage.set_read_only`), as the charts' does.
+- **A page that reads only starts and holds no fetcher** (`FetcherLink(held=False)`; `serve --daemon` too): one
+  here would have nothing to do. The page shows the status the fetcher that writes on the database left in it.
 - **A database that is behind this software** on another system's drive is said at the command line, in the
   library's words (`storage.common.Behind`), and left as it is: its own system brings it up to date.
 

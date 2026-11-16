@@ -60,11 +60,14 @@ class FetcherLink:
     (lib.page()): attached at a page's first request (`touch`; the fetcher started if none answers),
     let go once no page has been in touch for QUIET_SECONDS (`watch_quiet`; the daemon's own hold
     keeps the fetcher up regardless); its status, a wake and a pass asked over the pipe (what the
-    page server asks of a fetcher: `status`, `wake_up`, `ask_pass`)."""
+    page server asks of a fetcher: `status`, `wake_up`, `ask_pass`). `held=False`: a process that reads only
+    (LIMINAL_READONLY) holds and starts no fetcher: one here would have nothing to do, and the page reads the status
+    the fetcher that writes on this database left in the file."""
 
-    def __init__(self, db_path: Path, log: Log = print):
+    def __init__(self, db_path: Path, log: Log = print, held: bool = True):
         self.db_path = Path(db_path)
         self.log = log
+        self.held = held
         self._lock = threading.Lock()
         self._att = None
         self._last_contact = time.monotonic()
@@ -89,6 +92,8 @@ class FetcherLink:
             self._attach_locked()
 
     def _attach_locked(self):
+        if not self.held:
+            return None
         if self._att is not None:
             try:
                 if self._att.alive():
@@ -410,7 +415,7 @@ class Service:
         if port is not None:
             from .app import IntegratorApp  # the page's hold on the integrator's plugins, with their login
 
-            link = FetcherLink(settings.db_path, log)
+            link = FetcherLink(settings.db_path, log, held=not settings.read_only)
             threading.Thread(target=lib.page(), args=(settings, port),
                              kwargs={"link": link, "open_browser": open_browser, "log": log, "stop": stop,
                                      "rescan": not os.environ.get("LIMINAL_NO_RESCAN"), "reload_settings": lib.config.load_settings,
@@ -419,7 +424,10 @@ class Service:
                              name="service-page", daemon=True).start()
             log(f"service: the integrator's page and data API at {page_url(port)}; the fetcher runs while a page is in touch"
                 + ("; this server ends once no page has been in touch for a while" if self.until_quiet and not daemon else ""))
-        if not daemon:
+        if settings.read_only:
+            log("service: reading only (LIMINAL_READONLY): no fetcher is started or held here; the page shows what the "
+                "fetcher that writes on this database left")
+        if not daemon or settings.read_only:
             log("service: up until told to stop (Ctrl+C, a stop)")
             while not stop.wait(CHECK_SECONDS):
                 pass

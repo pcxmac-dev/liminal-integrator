@@ -344,3 +344,14 @@ def test_the_link_holds_the_fetcher_while_a_page_is_in_touch_and_asks_it_over_th
     monkeypatch.setattr(lib, "attach_fetcher", lambda db_path, log=print: None)
     assert link.status() is None and not link.connected
     link.wake_up()  # nothing to wake: no error
+
+
+def test_a_page_that_reads_only_starts_and_holds_no_fetcher(monkeypatch, tmp_path):
+    """LIMINAL_READONLY (the suite inside WSL on Windows' database, at first): a fetcher here would have nothing to do
+    and nothing it may write, so none is started; the page reads the status the other fetcher left in the file."""
+    monkeypatch.setattr(lib, "attach_fetcher", lambda *a, **k: pytest.fail("a fetcher was started"))
+    link = service.FetcherLink(tmp_path / "liminal.db", lambda m: None, held=False)
+    link.touch()
+    link.wake_up()
+    link.ask_pass()
+    assert link.status() is None and not link.connected and link.let_go() is False
