@@ -18,6 +18,8 @@ import pytest
 from liminal_integrator import fetcher, lib
 
 NOW = datetime(2026, 11, 3, 15, 0, tzinfo=timezone.utc)  # a Tuesday, 10:00 ET: the session is on
+# The installation that is not the one running these tests (inside WSL this one is linux::Ubuntu itself)
+OTHER = "linux::Ubuntu" if lib.claims.os_name() == "windows" else "windows::NEPTUNE"
 
 
 class FakeAttachment:
@@ -70,48 +72,49 @@ def _fetcher(settings, monkeypatch):
     return f, log
 
 
-def _linux(path, pid: int = 4321):
-    """The suite inside WSL on the same database (its processes cannot be looked up from here)."""
-    return lib.claims.Claims.open(path, me="linux::Ubuntu", pid=pid, alive=lambda p, s: True)
+def _other(path, pid: int = 4321):
+    """The other installation on the same database: the suite inside WSL seen from Windows, Windows' seen from
+    inside WSL (its processes cannot be looked up from here)."""
+    return lib.claims.Claims.open(path, me=OTHER, pid=pid, alive=lambda p, s: True)
 
 
 def test_a_feed_the_other_installation_is_fetching_is_waited_for_and_never_started_here(settings, monkeypatch, runs):
     f, log = _fetcher(settings, monkeypatch)
     store = lib.Store(settings.db_path, check_same_thread=False)
-    linux = _linux(settings.db_path)
+    other = _other(settings.db_path)
     try:
-        linux.take("feed:massive", what="the massive feed's run")
+        other.take("feed:massive", what="the massive feed's run")
         store.watch("massive", ["SPCX"], "minute", exchange="XNAS")
         r = store.request_put("SPCX", by="chart", now=NOW)
         f.tick(store, NOW)
         row = store.request_get(r["id"])
-        assert row["state"] == "collecting" and row["detail"] == "waiting for massive (fetching on linux::Ubuntu)"
+        assert row["state"] == "collecting" and row["detail"] == f"waiting for massive (fetching on {OTHER})"
         assert runs == {} and f.feeds == {}  # not started here: its run would only have been refused
         assert lib.collector.priority_requests(store, NOW)["SPCX"]["at"] == NOW  # on the stack its run there reads
         for seconds in (2, 4, 6):  # however often it is looked at: pending, never "its run ended without it"
             f.tick(store, NOW + timedelta(seconds=seconds))
         row = store.request_get(r["id"])
-        assert row["state"] == "collecting" and row["detail"] == "waiting for massive (fetching on linux::Ubuntu)" and runs == {}
+        assert row["state"] == "collecting" and row["detail"] == f"waiting for massive (fetching on {OTHER})" and runs == {}
         store.set_synced("massive", "SPCX", NOW + timedelta(seconds=8))  # the run there served it
         f.tick(store, NOW + timedelta(seconds=10))
         row = store.request_get(r["id"])
         assert row["state"] == "done" and row["detail"] == "served by massive" and f.active == {} and runs == {}
     finally:
-        linux.close()
+        other.close()
         store.close()
 
 
 def test_when_its_run_there_ends_without_the_symbol_the_feed_is_run_here(settings, monkeypatch, runs):
     f, log = _fetcher(settings, monkeypatch)
     store = lib.Store(settings.db_path, check_same_thread=False)
-    linux = _linux(settings.db_path)
+    other = _other(settings.db_path)
     try:
-        theirs = linux.take("feed:massive")
+        theirs = other.take("feed:massive")
         store.watch("massive", ["SPCX"], "minute", exchange="XNAS")
         r = store.request_put("SPCX", by="page", now=NOW)
         f.tick(store, NOW)
         assert runs == {} and f.active[r["id"]]["away"] == {"massive"}
-        linux.release(theirs)  # its run there ended (a cap, a stop) before it reached the symbol
+        other.release(theirs)  # its run there ended (a cap, a stop) before it reached the symbol
         f.tick(store, NOW + timedelta(seconds=2))
         assert "massive" in runs and store.request_get(r["id"])["state"] == "collecting"  # held here now
         assert f.active[r["id"]]["away"] == set()
@@ -121,29 +124,29 @@ def test_when_its_run_there_ends_without_the_symbol_the_feed_is_run_here(setting
         row = store.request_get(r["id"])
         assert row["state"] == "failed" and "massive: its run ended without it" in row["detail"]
     finally:
-        linux.close()
+        other.close()
         store.close()
 
 
 def test_the_standing_pass_leaves_a_feed_the_other_installation_is_fetching(settings, monkeypatch, runs):
     f, log = _fetcher(settings, monkeypatch)
     store = lib.Store(settings.db_path, check_same_thread=False)
-    linux = _linux(settings.db_path)
+    other = _other(settings.db_path)
     try:
-        linux.take("feed:massive")  # no lock file says so: a lock file's process id means nothing across systems
+        other.take("feed:massive")  # no lock file says so: a lock file's process id means nothing across systems
         assert not lib.proc.run_holders(settings.db_path)
         out = f.standing_pass(store, NOW)
         assert "massive" in out["going"] and "massive" not in runs and "tiingo" in runs
         assert any("fetching already: massive" in m for m in log)
     finally:
-        linux.close()
+        other.close()
         store.close()
 
 
 def test_the_fetcher_says_it_is_at_work_and_takes_back_only_what_a_fetcher_that_is_gone_left(settings, monkeypatch, runs):
     monkeypatch.setattr(fetcher, "TICK_SECONDS", 0.05)
     f, log = _fetcher(settings, monkeypatch)
-    linux = _linux(settings.db_path, pid=77)
+    other = _other(settings.db_path, pid=77)
     with lib.Store(settings.db_path) as store:
         store.watch("massive", ["SPCX"], "minute", exchange="XNAS")
         dead = store.request_put("SPCX", by="cli")["id"]
@@ -152,8 +155,8 @@ def test_the_fetcher_says_it_is_at_work_and_takes_back_only_what_a_fetcher_that_
         store.request_next()
         with store.conn:  # one left by a fetcher here that is no more; one the other installation's fetcher is collecting
             store.conn.execute("UPDATE fetch_requests SET pid=999999999, state='collecting' WHERE id=?", (dead,))
-            store.conn.execute("UPDATE fetch_requests SET pid=77, instance='linux::Ubuntu', state='collecting' WHERE id=?", (theirs,))
-    linux.take("process:linux::Ubuntu:77", what=fetcher.AT_WORK)
+            store.conn.execute("UPDATE fetch_requests SET pid=77, instance=?, state='collecting' WHERE id=?", (OTHER, theirs))
+    other.take(f"process:{OTHER}:77", what=fetcher.AT_WORK)
     stop = threading.Event()
     t = threading.Thread(target=f.run, args=(stop,), daemon=True)
     t.start()
@@ -162,7 +165,7 @@ def test_the_fetcher_says_it_is_at_work_and_takes_back_only_what_a_fetcher_that_
         while "massive" not in runs and time.monotonic() < end:
             time.sleep(0.02)
         assert "massive" in runs and any("1 request(s) left by the fetcher before" in m for m in log)
-        here = [h for h in linux.holders(lib.claims.PROCESS) if h.instance != "linux::Ubuntu"]
+        here = [h for h in other.holders(lib.claims.PROCESS) if h.instance != OTHER]
         assert [(h.pid, h.what) for h in here] == [(os.getpid(), fetcher.AT_WORK)]  # seen from the other side
         with lib.Store(settings.db_path) as store:
             assert store.request_get(theirs)["state"] == "collecting" and store.request_get(theirs)["pid"] == 77  # left to it
@@ -170,7 +173,7 @@ def test_the_fetcher_says_it_is_at_work_and_takes_back_only_what_a_fetcher_that_
     finally:
         stop.set()
         t.join(10)
-        linux.close()
+        other.close()
     assert not t.is_alive()
     assert [h for h in lib.claims.held(settings.db_path, lib.claims.PROCESS) if h.mine] == []  # its own given back at its end
 
@@ -179,20 +182,20 @@ def test_a_fetcher_that_is_offline_leaves_the_requests_to_one_that_can_serve_the
     f, log = _fetcher(settings, monkeypatch)
     f.settings = replace(settings, offline=True)
     store = lib.Store(settings.db_path, check_same_thread=False)
-    linux = _linux(settings.db_path, pid=77)
+    other = _other(settings.db_path, pid=77)
     try:
         store.watch("massive", ["SPCX"], "minute", exchange="XNAS")
         r = store.request_put("SPCX", by="chart", now=NOW)
-        linux.take("process:linux::Ubuntu:77", what=fetcher.AT_WORK)  # a fetcher at work on the other side
+        other.take(f"process:{OTHER}:77", what=fetcher.AT_WORK)  # a fetcher at work on the other side
         assert f.fetcher_elsewhere()
         f.tick(store, NOW)
         assert store.request_get(r["id"])["state"] == "waiting" and runs == {}  # not taken, so not refused
-        linux.release("process:linux::Ubuntu:77")
-        linux.take("process:linux::Ubuntu:77", what=fetcher.NOT_FETCHING)  # the other one offline too: nobody serves
+        other.release(f"process:{OTHER}:77")
+        other.take(f"process:{OTHER}:77", what=fetcher.NOT_FETCHING)  # the other one offline too: nobody serves
         assert not f.fetcher_elsewhere()
         f.tick(store, NOW + timedelta(seconds=2))
         row = store.request_get(r["id"])
         assert row["state"] == "failed" and "offline" in row["detail"]  # said, as before
     finally:
-        linux.close()
+        other.close()
         store.close()
