@@ -128,8 +128,8 @@ def test_with_neither_a_sweep_due_nor_a_symbol_asked_a_run_audits_what_waits_in_
             store.upsert_bars("massive", "AAA", "minute", 1, [_minute(WED)])
     out = auditors.run(settings, lambda *_: None)
     assert out == {"cache": {"recovered": 0, "pulls": 1, "mismatch": 0, "removed": 0, "forgotten": 0}}
-    with lib.Store(settings.db_path) as store:
-        assert store.pull(p.id)["audit"] == "ok"
+    with lib.Store(settings.db_path) as store:  # it passed: counted, and forgotten (the ledger is no history)
+        assert store.pull(p.id) is None and store.cache_verified()["pulls"] == 1
     assert auditors.said(out) == ("cache: 1 pulls audited (0 with a finding), 0 left open by a run that is gone closed, "
                                   "0 files removed")
     assert auditors.said({}) == "nothing to do"

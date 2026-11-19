@@ -18,7 +18,8 @@ of the feeds; for the integrator"). Needs liminal-libs>=1.64.0 (the fetch cache 
   ask and is said there as handed to the auditors; one whose process ended without finishing it is said as failed.
   The fetcher's status says whether the auditors run.
 - **`GET /api/auditor`**: the auditors for their page: the policy as the login has it now (a choice made a moment ago
-  counts), the fetch cache by state and size against its cap, the last sweep, whether one is due, the findings, the
+  counts), the fetch cache by state and size against its cap, the pulls verified so far (counted: a pull that passed
+  is not kept in the ledger), the last sweep, whether one is due, the findings, the
   audits asked for, the plugin, and whether a process is at work. A setting that is none of an option's choices is
   said in words, and the defaults apply meanwhile.
 - **`POST /api/auditor/run`** `{what: "audit" | "sweep", symbol?}`: what waits in the cache (or one symbol) audited
