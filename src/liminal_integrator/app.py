@@ -14,7 +14,10 @@ hardware"): `GET /api/databases` the list, `GET /api/databases/detail?id=` one d
 and the database plugins' instances (1.12.0; the user, 2026-11-15: "for the integrator i need plugins for
 each type of database ... each instance in the plugin has it's own configuration how it's shared, ports,
 permissions etc"): `GET /api/databases/plugins` every engine's plugin with its instances, `POST
-/api/databases/instances` one of the page's forms answered by its plugin (instances.py)."""
+/api/databases/instances` one of the page's forms answered by its plugin (instances.py); and the auditors (1.13.0;
+the user, 2026-11-18: "an auditor plugin, for auditing sources and maintaining the integrity of the feeds; for the
+integrator"): `GET /api/auditor` where they stand (their policy, the fetch cache, the last sweep, the findings),
+`POST /api/auditor/run` an audit or a sweep asked for now (auditors.py)."""
 from __future__ import annotations
 
 import threading
@@ -85,4 +88,12 @@ class IntegratorApp(lib.App):
             from . import instances
 
             return 200, instances.ask(self, body if isinstance(body, dict) else {})
+        if method == "GET" and path == "/api/auditor":
+            from . import auditors
+
+            return 200, auditors.overview(self)
+        if method == "POST" and path == "/api/auditor/run":
+            from . import auditors
+
+            return 200, auditors.ask(self, body if isinstance(body, dict) else {})
         return super().api(handler, method, path, query, body)

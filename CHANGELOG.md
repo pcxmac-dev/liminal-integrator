@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.13.0 (2026-11-18)
+
+The auditors: what runs them, and what their page asks (the user, 2026-11-15: "auditors should run if a symbol is
+updated, or periodically"; "For the integrator, there needs to be a plugin called auditor and it will manage the
+configuration of auditing data"; and 2026-11-18: "an auditor plugin, for auditing sources and maintaining the integrity
+of the feeds; for the integrator"). Needs liminal-libs>=1.64.0 (the fetch cache and the auditors: `spool.py`,
+`storage/pulls.py`, `auditing.py`; plugin API 2.4). Their options are a package of their own
+(plugin-integrator-auditor); without it they keep to the defaults.
+- **A pull is audited as it closes**, by the feed's run that made it (the library's). What is left runs in a process
+  of its own, `liminal-integrator audit run` (`auditors.py`): the audits asked for, a sweep when one is due, else what
+  still waits in the fetch cache. It ends when its work is done or the policy's minutes are spent: nothing stays
+  running. One at a time on a database (the claim `audit`), whichever installation starts it. A copy that reads only
+  audits nothing.
+- **The fetcher starts it** (`Fetcher.check_auditors`): when a request of the kind `audit` waits, and when the sweep is
+  due by the policy's interval (looked at once a minute). An audit asked for is on the fetcher's stack like any other
+  ask and is said there as handed to the auditors; one whose process ended without finishing it is said as failed.
+  The fetcher's status says whether the auditors run.
+- **`GET /api/auditor`**: the auditors for their page: the policy as the login has it now (a choice made a moment ago
+  counts), the fetch cache by state and size against its cap, the last sweep, whether one is due, the findings, the
+  audits asked for, the plugin, and whether a process is at work. A setting that is none of an option's choices is
+  said in words, and the defaults apply meanwhile.
+- **`POST /api/auditor/run`** `{what: "audit" | "sweep", symbol?}`: what waits in the cache (or one symbol) audited
+  now, or a sweep now, asked as a request. A copy that reads only refuses.
+- **`liminal-integrator audit run [SYMBOLS...] | sweep | status [--limit N]`**: what the fetcher starts, a sweep now,
+  and where the auditors stand in a terminal.
+- Every command sets the auditors' policy once it knows its settings (the plugin's, else the defaults).
+
 ## 1.12.0 (2026-11-16)
 
 The database plugins' instances on the integrator's page (the user, 2026-11-15: "for the integrator i need plugins for

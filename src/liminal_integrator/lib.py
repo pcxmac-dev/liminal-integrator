@@ -5,7 +5,7 @@ in its own process (page()). A library piece the integrator needs is added to li
 written here twice."""
 from __future__ import annotations
 
-from liminal_libs import claims, collector, config, freshness, layout, proc, runner, sourcing, systemd  # noqa: F401
+from liminal_libs import auditing, claims, collector, config, freshness, layout, proc, runner, sourcing, systemd  # noqa: F401
 from liminal_libs import host, mongo  # noqa: F401
 from liminal_libs.apps import App, EnvironmentLogin, Login, Refused, attach_registry  # noqa: F401
 from liminal_libs.host import FETCHER, Host, attach_fetcher, feed_run, history_run  # noqa: F401
@@ -18,11 +18,13 @@ from liminal_libs.sessions import ET  # noqa: F401
 from liminal_libs.sources import apis, feed_closed, feed_profiles, providers, supports  # noqa: F401
 from liminal_libs.sources.registry import SELECTION_VAR, plugin_fetchers, plugins_loaded, select, selection  # noqa: F401
 from liminal_libs.sources.registry import databases, errors as plugin_errors  # noqa: F401 - the database plugins (1.61.0)
-from liminal_libs.storage import Store, set_read_only  # noqa: F401
+from liminal_libs.sources.registry import auditors  # noqa: F401 - the auditors' plugin (1.64.0)
+from liminal_libs.storage import Store, read_only, set_read_only  # noqa: F401
 from liminal_libs.storage.common import Behind  # noqa: F401
 from liminal_libs.storage.databases import ENGINES as DATABASE_ENGINES, Refusal  # noqa: F401
 from liminal_libs.storage.link import LinkError  # noqa: F401
-from liminal_libs.storage.requests import KINDS, OPEN, STATUS_KEY, read_status, write_status  # noqa: F401
+from liminal_libs.storage.requests import AUDIT, EVERYTHING, KINDS, OPEN, STATUS_KEY, WAITING  # noqa: F401
+from liminal_libs.storage.requests import read_status, write_status  # noqa: F401
 from liminal_libs.stores import history_due  # noqa: F401
 from liminal_libs.symbols import resolve  # noqa: F401
 

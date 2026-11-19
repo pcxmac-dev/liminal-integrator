@@ -1,4 +1,5 @@
-"""The integrator's command line: `liminal-integrator serve|status|request|pass|cancel|host` and
+"""The integrator's command line: `liminal-integrator serve|status|request|pass|cancel|host`,
+`liminal-integrator audit run|sweep|status` (the auditors: auditors.py) and
 `liminal-integrator service install|remove|status|run`, `--daemon` on serve, install and run for
 the fetcher held for good; `--until-quiet` on serve for a server that ends once no page has been in
 touch for a while; `--plugins` for the plugins loaded (names, or none); `--name` (with
@@ -84,6 +85,15 @@ def cmd_fetcher(args, settings) -> int:
     finally:
         held.detach()
     return 0
+
+
+def cmd_audit(args, settings) -> int:
+    """The auditors (auditors.py): `run` what the fetcher starts (the audits asked for, a sweep when one is due, else
+    what waits in the fetch cache), `sweep` one now, `status` where they stand; symbols after `run` are gone over
+    now."""
+    from . import auditors
+
+    return auditors.command(args, settings)
 
 
 def cmd_service(args, settings) -> int:
@@ -177,6 +187,12 @@ def build_parser() -> argparse.ArgumentParser:
                                       "for good): install, remove, status, run")
     add_service_arguments(s)
     s.set_defaults(func=cmd_service)
+    a = sub.add_parser("audit", help="the auditors: run (what the fetcher starts: the audits asked for, a sweep when "
+                                    "due, else what waits in the fetch cache), sweep (one now), status")
+    a.add_argument("action", nargs="?", default="status", choices=["run", "sweep", "status"])
+    a.add_argument("symbols", nargs="*", help="run: symbols gone over now, out of turn")
+    a.add_argument("--limit", type=int, default=20, help="status: findings shown")
+    a.set_defaults(func=cmd_audit)
     return p
 
 
@@ -209,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = lib.config.load_settings(login=lib.EnvironmentLogin())
         lib.set_read_only(settings.read_only)  # LIMINAL_READONLY: every store this process opens reads only
+        lib.auditing.set_policy(lib.auditing.policy_of(settings))  # the auditors' policy: its plugin's, else the defaults
         return args.func(args, settings)
     except (lib.Behind, lib.LinkError) as e:  # a database on another system's drive that this software is ahead of
         print(e, file=sys.stderr)  # (said, not altered), or one whose own system cannot be reached to open it

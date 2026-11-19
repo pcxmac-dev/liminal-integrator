@@ -62,6 +62,7 @@ PAGE_PORT = 8785  # its page and data API (LIMINAL_FETCHER_PORT; 0: a free one; 
 NAME_VAR = "LIMINAL_INTEGRATOR_NAME"  # this integrator's name when it is not the only one (an instance of its own)
 SERVE_TIMEOUT_S = 6 * 3600  # a request whose feeds have not served it by then has failed
 STATUS_EVERY_S = 30.0  # the status written at least this often while something goes on
+SWEEP_LOOK_S = 60.0  # whether the auditors' sweep is due is looked at this often (auditors.py)
 Log = Callable[[str], None]
 
 
@@ -281,6 +282,9 @@ class Fetcher:
         self.by_pass: set[str] = set()  # the feeds the standing pass holds (until their runs end)
         self.history = None  # the closed months' copy, held
         self.extras = None  # the extras' process
+        self.auditors = None  # the auditors' process (auditors.py): the sweep, and an audit asked for
+        self.audit_asks: dict[int, bool] = {}  # an audit asked for -> whether a process was started for it
+        self._sweep_looked = 0.0  # when the sweep was last looked at for being due (monotonic)
         self.workers: threading.Thread | None = None  # the plugins that fetch on their own
         self.active: dict[int, dict] = {}  # request id -> its symbol, feeds, when asked, its detail
         self.last_pass: float | None = None
@@ -324,6 +328,7 @@ class Fetcher:
                            for i, a in self.active.items()],
                 "feeds": sorted(feeds), "passFeeds": sorted(self.by_pass),
                 "history": self.history is not None and self._alive(self.history),
+                "auditors": self.auditors is not None and self.auditors.poll() is None,
                 "lastPass": self.last_pass_at.isoformat(timespec="seconds") if self.last_pass_at else None,
                 "nextDue": self.next_due.isoformat(timespec="seconds") if self.next_due else None,
                 "passHours": pass_hours(), "clients": self.host.clients() if self.host is not None else [],
@@ -374,6 +379,7 @@ class Fetcher:
         self.ticks += 1
         self.take_requests(store, now)
         self.check_active(store, now)
+        self.check_auditors(store, now)
         if self.pass_due(store, now):
             self.standing_pass(store, now)
         self.settle_feeds()
@@ -393,6 +399,12 @@ class Fetcher:
             return  # this one could only refuse them: they are left to the fetcher that can serve them
         assessor = None  # the profiles read once for the tick, when a request comes
         while (r := store.request_next(now)) is not None:
+            if r["kinds"] == (lib.AUDIT,):  # an audit asked for (1.13.0): the auditors' to take, not a feed's run's
+                store.request_update(r["id"], state="collecting", detail="handed to the auditors", now=now)
+                with self.lock:
+                    self.audit_asks[r["id"]] = False
+                self.log(f"fetcher: an audit asked for ({r['by']}): {r['symbol']}")
+                continue
             if s.offline:
                 # offline: assessed all the same (no request: the plugins' records and the watchlist), so
                 # the page shows which feeds would be asked (the user, 2026-11-03: going through the UI
@@ -544,6 +556,46 @@ class Fetcher:
                     except Exception:  # noqa: BLE001 - a run gone already
                         pass
             self.feeds, self.by_pass, self.history = {}, set(), None
+
+    # -- the auditors ----------------------------------------------------------------------------
+    def check_auditors(self, store, now: datetime) -> None:
+        """The auditors' process (auditors.py) started when there is work for it and none runs: an audit asked
+        for, or the sweep due (looked at once a minute). It ends by itself. An audit handed to a process that
+        ended without settling it is failed and said; nothing here while this copy reads only."""
+        if self.settings.read_only:
+            return
+        if self.auditors is not None and self.auditors.poll() is None:
+            return  # at work
+        with self.lock:
+            asks = dict(self.audit_asks)
+        waiting = False
+        for request_id, given in asks.items():
+            row = store.request_get(request_id)
+            if row is None or row["state"] not in lib.OPEN:
+                with self.lock:
+                    self.audit_asks.pop(request_id, None)  # settled (or taken back)
+            elif given:
+                store.request_update(request_id, state="failed", detail="the auditors ended before it", now=now)
+                with self.lock:
+                    self.audit_asks.pop(request_id, None)
+                self.log(f"fetcher: the auditors ended before the audit asked for (#{request_id})")
+            else:
+                waiting = True
+        due = False
+        if not waiting and time.monotonic() - self._sweep_looked >= SWEEP_LOOK_S:
+            from . import auditors
+
+            self._sweep_looked = time.monotonic()
+            due = auditors.sweep_due(store, auditors.policy_of(self.app)[0], now)
+        if not (waiting or due):
+            return
+        exe = Path(sys.executable)
+        quiet = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
+        self.auditors = self._spawn([str(quiet), "-m", "liminal_integrator", "audit", "run"])
+        with self.lock:
+            self.audit_asks = {i: True for i in self.audit_asks}
+        self.log("fetcher: the auditors started in a process of their own ("
+                 + ("an audit asked for" if waiting else "the sweep is due") + ")")
 
     # -- the standing pass ---------------------------------------------------------------------
     def pass_due(self, store, now: datetime) -> bool:
