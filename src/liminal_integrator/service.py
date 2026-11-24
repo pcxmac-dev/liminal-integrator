@@ -236,7 +236,9 @@ def task_script(action: str, daemon: bool = False, name: str = "", db_path: Path
     task = _ps(task_name(name))
     if action == "install":
         exe, *args = command(daemon, name, db_path, port, plugins)
-        return (f"$a = New-ScheduledTaskAction -Execute {_ps(exe)} -Argument {_ps(' '.join(args))}; "
+        # each argument quoted for Windows (list2cmdline): until 1.13.3 they were joined with plain spaces, and a
+        # database on a path with a space ran the task with its path split in two (the review of 2026-11-21, item 26)
+        return (f"$a = New-ScheduledTaskAction -Execute {_ps(exe)} -Argument {_ps(subprocess.list2cmdline(args))}; "
                 "$t = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\\$env:USERNAME\"; "
                 "$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew "
                 "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "

@@ -267,3 +267,28 @@ def test_the_command_line_seals_a_process_that_reads_only_and_says_a_database_th
 
     monkeypatch.setattr(lib.config, "load_settings", unreachable)  # (the settings are asked of the helper first)
     assert cli.main(["serve"]) == 2 and "the helper on Windows did not answer" in capsys.readouterr().err
+
+
+def test_a_feed_run_started_by_hand_here_is_waited_for_not_failed(settings, monkeypatch, runs):
+    """The review of 2026-11-21, item 26: a feed run by hand on this installation (`--source massive sync`) holds
+    the feed's claim; a request for it started a run here that was refused and ended, and the request failed with
+    "its run ended without it". It is waited for like the other installation's run; when it ends, held here."""
+    f, log = _fetcher(settings, monkeypatch)
+    store = lib.Store(settings.db_path, check_same_thread=False)
+    by_hand = lib.claims.Claims.open(settings.db_path, pid=os.getppid())  # this installation, another live process
+    try:
+        claim = by_hand.take("feed:massive", what="the massive feed's run")
+        store.watch("massive", ["SPCX"], "minute", exchange="XNAS")
+        r = store.request_put("SPCX", by="cli", now=NOW)
+        f.tick(store, NOW)
+        for seconds in (2, 4):
+            f.tick(store, NOW + timedelta(seconds=seconds))
+        row = store.request_get(r["id"])
+        assert row["state"] == "collecting" and row["detail"] == f"waiting for massive (fetching in process {os.getppid()})"
+        assert runs == {}  # not started here: the claim would only have refused it
+        by_hand.release(claim)  # the run by hand ended before it reached the symbol
+        f.tick(store, NOW + timedelta(seconds=6))
+        assert "massive" in runs and store.request_get(r["id"])["state"] == "collecting"
+    finally:
+        by_hand.close()
+        store.close()

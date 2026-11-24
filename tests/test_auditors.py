@@ -57,7 +57,8 @@ def _app(settings, log=None) -> IntegratorApp:
 
 
 # -- the page ------------------------------------------------------------------------------------------------------------
-def test_the_page_reads_where_the_auditors_stand(settings):
+def test_the_page_reads_where_the_auditors_stand(settings, monkeypatch):
+    monkeypatch.setattr(lib, "auditors", lambda: {})  # no auditor plugin, whichever is installed (1.13.3)
     _with_a_hole(settings)
     got = auditors.overview(_app(settings))
     assert got["plugin"] is None and got["problem"] == "" and got["running"] is False and got["asked"] == []
@@ -242,6 +243,7 @@ def test_a_fetcher_that_reads_only_starts_no_auditors(settings, monkeypatch):
 
 # -- the command line ------------------------------------------------------------------------------------------------------
 def test_the_command_line_has_the_auditors(settings, capsys, monkeypatch):
+    monkeypatch.setattr(lib, "auditors", lambda: {})  # no auditor plugin, whichever is installed (1.13.3)
     args = cli.build_parser().parse_args(["audit"])
     assert (args.action, args.symbols, args.func) == ("status", [], cli.cmd_audit)
     assert cli.build_parser().parse_args(["audit", "run", "AAA", "bbb"]).symbols == ["AAA", "bbb"]
@@ -253,3 +255,49 @@ def test_the_command_line_has_the_auditors(settings, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "no plugin: the defaults" in out and "findings: 1 open" in out and "hole" in out and "massive:AAA" in out
     assert "audit on update on, sweep every 24.0 h for 10 min, on a mismatch repair, keep 0 days, cap 20 GB, 5 re-pulls" in out
+
+
+def test_no_auditors_are_started_while_another_process_holds_their_claim(settings, monkeypatch):
+    """The review of 2026-11-21, item 26: a fetcher that did not hold the claim `audit` started an auditors' process
+    every minute while the sweep was due, each finding it taken. While another holds it: none started, the sweep
+    under way there not due here, an audit asked for waiting (not failed) until the claim is free."""
+    f, log, started = _fetcher(settings, monkeypatch)
+    other = "linux::Ubuntu" if lib.claims.os_name() == "windows" else "windows::NEPTUNE"
+    theirs = lib.claims.Claims.open(settings.db_path, me=other, pid=4242, alive=lambda p, s: True)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(fetcher.time, "monotonic", lambda: clock["now"])
+    try:
+        claim = theirs.take(auditors.CLAIM, what="the auditors")
+        with lib.Store(settings.db_path) as store:
+            for minute in range(3):  # none ever ran: the sweep due, looked at every minute
+                f.check_auditors(store, NOW + timedelta(minutes=minute))
+                clock["now"] += fetcher.SWEEP_LOOK_S
+            r = store.request_put("AAA", ("audit",), by="page")
+            f.take_requests(store, NOW)
+            f.check_auditors(store, NOW)
+            assert started == [] and f.audit_asks == {r["id"]: False}
+            assert store.request_get(r["id"])["state"] == "collecting"
+            theirs.release(claim)  # their process ended: the ask is handed to one started here
+            f.check_auditors(store, NOW)
+            assert len(started) == 1 and "an audit asked for" in log[-1]
+    finally:
+        theirs.close()
+
+
+def test_a_request_for_bars_and_an_audit_asks_the_auditors_too(settings, monkeypatch):
+    """The review of 2026-11-21, item 26: `request --kinds bars,audit` was fetched and its audit lost (only a request
+    of the audit alone reached the auditors). The audit is asked of them as a request of its own; the bars fetched."""
+    f, log, started = _fetcher(settings, monkeypatch)
+    held: list[str] = []
+    monkeypatch.setattr(f, "hold_feed", lambda name: held.append(name) or True)
+    monkeypatch.setattr(f, "feeds_elsewhere", lambda: {})
+    with lib.Store(settings.db_path) as store:
+        store.kv_set(lib.auditing.LAST_KEY, json.dumps({"at": NOW.isoformat(), "series": 0}))  # (no sweep due)
+        store.watch("massive", ["AAA"], "minute")
+        r = store.request_put("AAA", ("bars", "audit"), by="cli")
+        f.take_requests(store, NOW)
+        audits = [x for x in store.requests_open() if x["kinds"] == (lib.AUDIT,)]
+        assert len(audits) == 1 and audits[0]["symbol"] == "AAA" and audits[0]["state"] == "collecting"
+        assert f.audit_asks == {audits[0]["id"]: False} and r["id"] in f.active and held == ["massive"]
+        f.check_auditors(store, NOW)
+        assert len(started) == 1 and started[0].args[-2:] == ["audit", "run"]

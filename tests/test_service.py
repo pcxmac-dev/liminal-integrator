@@ -417,3 +417,11 @@ def test_a_page_in_touch_while_the_quiet_watcher_lets_go_keeps_its_fetcher_and_t
     assert link.connected and ended == []  # the fresh request keeps its fetcher, and the server stays up
     assert link._woken is True  # its touch still counts: the next quiet look lets the new one go
     assert link._quiet_step(lambda: ended.append(1)) is True and ended == [1] and pipes[1].detached
+
+
+def test_a_named_integrators_task_quotes_a_path_with_a_space(tmp_path):
+    """The review of 2026-11-21, item 26: the task's -Argument was joined with plain spaces, so a database on a path
+    with a space ran with its path split in two. Each argument is quoted for Windows (subprocess.list2cmdline)."""
+    db = tmp_path / "My Data" / "liminal.db"
+    script = service.task_args("install", name="paper", db_path=db, port=8786)[-1]
+    assert "--name paper --db " + '"' + str(db) + '"' + " --port 8786'" in script

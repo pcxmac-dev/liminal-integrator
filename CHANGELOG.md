@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.13.3 (2026-11-24)
+
+The review of 2026-11-21 on your desktop (Monday list item 26), its P3s in the integrator:
+- **No auditors' process while another holds their claim.** A fetcher that did not hold the claim `audit` started one
+  every minute while the sweep was due, each finding the claim taken (`check_auditors`). While another process holds
+  it (a hand-started `audit run`, the other installation's), none is started: the sweep under way there is not due
+  here, and an audit asked for waits for the claim to be free.
+- **A request for bars and an audit keeps its audit.** Only a request of the audit alone reached the auditors; one
+  whose kinds held audit with others (`request --kinds bars,audit`) was fetched and its audit lost. The audit is now
+  asked of the auditors as a request of its own, as the page asks it, and the request fetches the rest.
+- **A feed run by hand is waited for.** A feed whose run was started by hand on this installation (it holds the claim
+  `feed:NAME`) made a request for it fail: the run started for the request was refused, and the request was counted
+  as served by no feed. Such a run is now waited for like the other installation's (`waiting for NAME (fetching in
+  process PID)`); when it ends without the symbol, the feed's run is held here.
+- **A named integrator's logon task on a path with a space.** The task's arguments were joined with plain spaces, so a
+  database on such a path was split in two; each is now quoted for Windows (`subprocess.list2cmdline`).
+- Three tests no longer assume the auditor and database plugins absent: they hold whichever are installed.
+
 ## 1.13.2 (2026-11-24)
 
 The review of 2026-11-21 on your desktop (Monday list item 26): a request could stay assessing until the fetcher

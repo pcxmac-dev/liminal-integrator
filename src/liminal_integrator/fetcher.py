@@ -152,6 +152,11 @@ def _aware(t: datetime | None) -> datetime | None:
     return t.replace(tzinfo=timezone.utc) if t is not None and t.tzinfo is None else t
 
 
+def _where(held) -> str:
+    """Where another's run of a feed goes on, in words: on the other installation, or in a process of this one."""
+    return f"in process {held.pid}" if held.mine else f"on {held.instance}"
+
+
 # -- assessing a symbol ------------------------------------------------------------------------
 @dataclass
 class Assessment:
@@ -410,13 +415,22 @@ class Fetcher:
                         self.audit_asks[r["id"]] = False
                     self.log(f"fetcher: an audit asked for ({r['by']}): {r['symbol']}")
                     continue
+                kinds = r["kinds"]
+                if lib.AUDIT in kinds:
+                    # bars and an audit in one request (`request --kinds bars,audit`, or an audit joined onto the
+                    # symbol's open fetch): until 1.13.3 only a request of the audit alone reached the auditors and
+                    # the audit was lost (the review of 2026-11-21, item 26). The audit is asked of the auditors as a
+                    # request of its own, as the page asks it, and this one fetches the rest
+                    audit = store.request_put(r["symbol"], kinds=(lib.AUDIT,), by=r["by"], now=now)
+                    kinds = tuple(k for k in kinds if k != lib.AUDIT) or ("bars",)
+                    self.log(f"fetcher: {r['symbol']}: the audit asked with it is request #{audit['id']}")
                 if s.offline:
                     # offline: assessed all the same (no request: the plugins' records and the watchlist), so
                     # the page shows which feeds would be asked (the user, 2026-11-03: going through the UI
                     # plugin by plugin on an offline copy)
                     try:
                         assessor = assessor or Assessor(store, s, now)
-                        plan = assessor.assess(r["symbol"], r["kinds"]).as_dict()
+                        plan = assessor.assess(r["symbol"], kinds).as_dict()
                     except Exception:  # noqa: BLE001 - the plan is a courtesy here
                         plan = None
                     asked = f"; it would ask {', '.join(plan['feeds'])}" if plan and plan.get("feeds") else \
@@ -426,7 +440,7 @@ class Fetcher:
                     continue
                 try:
                     assessor = assessor or Assessor(store, s, now)
-                    a = assessor.assess(r["symbol"], r["kinds"])
+                    a = assessor.assess(r["symbol"], kinds)
                 except Exception as e:  # noqa: BLE001 - this request fails; the next goes on
                     store.request_update(r["id"], state="failed", detail=f"could not be assessed: {type(e).__name__}: {e}", now=now)
                     self.log(f"fetcher: {r['symbol']}: could not be assessed: {type(e).__name__}: {e}")
@@ -438,12 +452,12 @@ class Fetcher:
                 lib.collector.request_priority(store, a.symbol, now)
                 # a feed another installation is fetching is not started here (its run would be refused): that run
                 # reads the same stack and takes the symbol next
-                away = self.feeds_elsewhere()
+                away = self.feeds_held_by_others()
                 there = [name for name in a.feeds if name in away]
                 held = [name for name in a.feeds if name not in away and self.hold_feed(name)]
                 detail = f"on {', '.join(held)}" if held else "" if there else "no feed's run could be started"
                 if there:
-                    detail += ("; " if detail else "") + ", ".join(f"{name} fetching on {away[name].instance}" for name in there)
+                    detail += ("; " if detail else "") + ", ".join(f"{name} fetching {_where(away[name])}" for name in there)
                 if a.retired:
                     detail += f" (retired since {a.retired}: its history completed, no new data asked for)"
                 store.request_update(r["id"], state="collecting", plan=a.as_dict(), detail=detail, now=now)
@@ -491,7 +505,7 @@ class Fetcher:
         (synced since it was asked), or its run has ended; failed when none served it. A feed another
         installation is fetching is waited for: its run there serves the symbol from the same stack; if
         that run ends without it, the feed's run is held here."""
-        away = self.feeds_elsewhere() if self.active else {}
+        away = self.feeds_held_by_others() if self.active else {}
         for rid, a in list(self.active.items()):
             r = store.request_get(rid)
             if r is None or r["state"] != "collecting":  # cancelled, or gone
@@ -510,7 +524,7 @@ class Fetcher:
                 synced = _aware(row["synced_at"]) if row is not None else None
                 if synced is not None and synced >= a["asked"]:
                     served.append(name)
-                elif name in away:  # the other installation's run of the feed: pending, not ended
+                elif name in away:  # another's run of the feed (installation, or a run started by hand): pending, not ended
                     a.setdefault("away", set()).add(name)
                     pending.append(name)
                 elif name in a.get("away", ()):  # its run there ended without the symbol: this fetcher's to run now
@@ -521,7 +535,7 @@ class Fetcher:
                 else:
                     pending.append(name)
             if pending and time.monotonic() - a["since"] < SERVE_TIMEOUT_S:
-                waited = ", ".join(f"{n} (fetching on {away[n].instance})" if n in away else n for n in pending)
+                waited = ", ".join(f"{n} (fetching {_where(away[n])})" if n in away else n for n in pending)
                 detail = (f"served by {', '.join(served)}; " if served else "") + f"waiting for {waited}"
                 if detail != a.get("detail"):
                     a["detail"] = detail
@@ -541,6 +555,24 @@ class Fetcher:
         """The feeds another installation on this database is fetching now: {feed: who} (its claims)."""
         prefix = lib.claims.FEED
         return {h.key[len(prefix):]: h for h in lib.claims.held(self.db_path, prefix, elsewhere=True)}
+
+    def feeds_held_by_others(self) -> dict:
+        """The feeds another process is fetching now: another installation's (feeds_elsewhere), and a run of this
+        one that this fetcher does not hold (`--source NAME sync` started by hand). Until 1.13.3 only the other
+        installation's counted (the review of 2026-11-21, item 26): a request for a feed run by hand started a run
+        that the claim refused, and the request failed with "its run ended without it" while the run by hand went
+        on. Such a run is waited for like the other installation's; when it ends without the symbol, the feed's
+        run is held here."""
+        out = self.feeds_elsewhere()
+        prefix = lib.claims.FEED
+        for h in lib.claims.held(self.db_path, prefix):
+            name = h.key[len(prefix):]
+            if h.mine and not h.own and name not in out:
+                with self.lock:
+                    ours = self.feeds.get(name)
+                if not self._alive(ours):  # not the run this fetcher holds
+                    out[name] = h
+        return out
 
     def fetcher_elsewhere(self) -> bool:
         """Whether another installation's fetcher that can serve requests is at work on this database."""
@@ -604,6 +636,16 @@ class Fetcher:
             return
         if self.auditors is not None and self.auditors.poll() is None:
             return  # at work
+        from . import auditors
+
+        if any(h.key == auditors.CLAIM and not h.own for h in lib.claims.held(self.db_path, auditors.CLAIM)):
+            # another process holds the auditors' claim (a hand-started `audit run`, the other installation's): one
+            # started here would only find it taken and end. Until 1.13.3 one was started every minute while the
+            # sweep was due (the review of 2026-11-21, item 26). The sweep under way there is not due here, and an
+            # audit asked for waits for the claim to be free (that process read its asks when it began)
+            with self.lock:
+                self.audit_asks = {i: False for i in self.audit_asks}
+            return
         with self.lock:
             asks = dict(self.audit_asks)
         waiting = False
@@ -621,8 +663,6 @@ class Fetcher:
                 waiting = True
         due = False
         if not waiting and time.monotonic() - self._sweep_looked >= SWEEP_LOOK_S:
-            from . import auditors
-
             self._sweep_looked = time.monotonic()
             due = auditors.sweep_due(store, auditors.policy_of(self.app)[0], now)
         if not (waiting or due):

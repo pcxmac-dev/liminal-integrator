@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from liminal_libs.apps import App, EnvironmentLogin
-from liminal_libs.sources.registry import assistants, providers, publishers
+from liminal_libs.sources.registry import assistants, auditors, databases, providers, publishers
 
 from liminal_integrator import cli, fetcher, lib
 from liminal_integrator.app import IntegratorApp
@@ -14,7 +14,9 @@ from liminal_integrator.app import IntegratorApp
 def test_the_integrator_holds_its_plugins_through_the_frame(tmp_path, monkeypatch, capsys):
     app = IntegratorApp(log=lambda m: None)
     assert isinstance(app, App) and isinstance(app.login, EnvironmentLogin) and (app.NAME, app.ICON, app.PORT) == ("integrator", "scroll", 8785)
-    free = {n for n, p in [*providers().items(), *publishers().items()] if p.app is None or p.app is app}
+    # the database and auditor plugins count when installed (the test held whichever are there, 1.13.3)
+    free = {n for n, p in [*providers().items(), *publishers().items(), *databases().items(), *auditors().items()]
+            if p.app is None or p.app is app}
     names = app.attach_plugins()
     assert set(names) == free and not (set(names) & set(assistants()))  # the stock-data plugins, never the platform's
     assert all(app.plugin(n).login is app.login and app.plugin(n).app is app for n in names)
