@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.13.1 (2026-11-24)
+
+The review of 2026-11-21 on your desktop (Monday list item 26), checked against the checkout: a page's request could race the quiet watcher. It decided under its lock that no page was in touch,
+then let the attachment go and ended the server (`serve --until-quiet`) outside it, so a request in between lost the
+fetcher it had just attached to and the server ended under it. The decision and the taking of the attachment are now
+one step under the lock (`FetcherLink._quiet_step`), and the server ends only if no page came in touch meanwhile.
+
 ## 1.13.0 (2026-11-18)
 
 The auditors: what runs them, and what their page asks (the user, 2026-11-15: "auditors should run if a symbol is

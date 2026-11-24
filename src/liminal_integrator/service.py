@@ -147,15 +147,30 @@ class FetcherLink:
         calls `on_quiet` then (serve --until-quiet: the server ends)."""
         stop = stop or threading.Event()
         while not stop.wait(QUIET_CHECK_SECONDS):
-            with self._lock:
-                due = self._woken and time.monotonic() - self._last_contact >= self.quiet_seconds()
-            if due:
-                held = self.let_go()
-                self._woken = False
-                if held:
-                    self.log(f"quiet: no page in touch for {self.quiet_seconds():g} s; the fetcher is let go")
-                if on_quiet is not None:
-                    on_quiet()
+            self._quiet_step(on_quiet)
+
+    def _quiet_step(self, on_quiet: Callable[[], None] | None = None) -> bool:
+        """One look of the watcher. The decision that no page is in touch and the taking of the attachment are one
+        step under the lock, so a touch either comes before it (and nothing is let go) or after it (and attaches
+        afresh, which the watcher never lets go). `on_quiet` (the server ending) only while no page has been in
+        touch since: a touch that came while the fetcher was being let go keeps the server up. Whether it was
+        quiet."""
+        with self._lock:
+            if not (self._woken and time.monotonic() - self._last_contact >= self.quiet_seconds()):
+                return False
+            att, self._att = self._att, None
+            self._woken = False
+        if att is not None:
+            try:
+                att.detach()
+            except Exception:  # noqa: BLE001 - gone already
+                pass
+            self.log(f"quiet: no page in touch for {self.quiet_seconds():g} s; the fetcher is let go")
+        with self._lock:
+            touched = self._woken
+        if on_quiet is not None and not touched:
+            on_quiet()
+        return True
 
 
 def python_quiet() -> Path:

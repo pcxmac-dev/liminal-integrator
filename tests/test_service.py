@@ -390,3 +390,30 @@ def test_a_page_that_reads_only_starts_and_holds_no_fetcher(monkeypatch, tmp_pat
     link.wake_up()
     link.ask_pass()
     assert link.status() is None and not link.connected and link.let_go() is False
+
+
+def test_a_page_in_touch_while_the_quiet_watcher_lets_go_keeps_its_fetcher_and_the_server(tmp_path, monkeypatch):
+    """The review of 2026-11-21 (item 26): the watcher decided the service was quiet under its lock, then let go of
+    the attachment and ended the server outside it, so a touch in between lost the fetcher it had just attached to
+    and the server ended under it (serve --until-quiet). A touch arriving while the old attachment is let go."""
+    link = service.FetcherLink(tmp_path / "liminal.db", lambda m: None)
+    pipes: list = []
+
+    class Pipe(FakeAttachment):
+        def detach(self):
+            super().detach()
+            if len(pipes) == 1:
+                link.touch()  # a page's request, just then: it attaches afresh
+
+    def attach_fetcher(db_path, log=print):
+        pipes.append(Pipe(lives=99))
+        return pipes[-1]
+    monkeypatch.setattr(lib, "attach_fetcher", attach_fetcher)
+    link.touch()
+    monkeypatch.setattr(link, "quiet_seconds", lambda: 0.0)
+    ended: list = []
+    assert link._quiet_step(lambda: ended.append(1)) is True
+    assert pipes[0].detached and len(pipes) == 2 and not pipes[1].detached
+    assert link.connected and ended == []  # the fresh request keeps its fetcher, and the server stays up
+    assert link._woken is True  # its touch still counts: the next quiet look lets the new one go
+    assert link._quiet_step(lambda: ended.append(1)) is True and ended == [1] and pipes[1].detached
