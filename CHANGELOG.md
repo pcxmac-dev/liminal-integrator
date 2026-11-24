@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.13.2 (2026-11-24)
+
+The review of 2026-11-21 on your desktop (Monday list item 26): a request could stay assessing until the fetcher
+restarted. Once taken (`request_next`), a step after it that raised (a busy database writing its priority, a
+feed's run that could not start) left it assessing and out of the fetcher's hands, and `request --wait` waited
+for ever. Such a request is now waiting again when trying again can help (the database locked or busy, taken on
+the next tick), else failed in the error's words; a write that meets the same busy database is tried again on
+the next tick.
+
 ## 1.13.1 (2026-11-24)
 
 The review of 2026-11-21 on your desktop (Monday list item 26), checked against the checkout: a page's request could race the quiet watcher. It decided under its lock that no page was in touch,

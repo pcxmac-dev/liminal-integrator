@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -287,6 +288,7 @@ class Fetcher:
         self._sweep_looked = 0.0  # when the sweep was last looked at for being due (monotonic)
         self.workers: threading.Thread | None = None  # the plugins that fetch on their own
         self.active: dict[int, dict] = {}  # request id -> its symbol, feeds, when asked, its detail
+        self.taken_back: dict[int, tuple[str, str]] = {}  # a request taken whose step raised -> (state, detail) still to write
         self.last_pass: float | None = None
         self.last_pass_at: datetime | None = None
         self.next_due: datetime | None = None
@@ -388,7 +390,9 @@ class Fetcher:
     # -- requests ------------------------------------------------------------------------------
     def take_requests(self, store, now: datetime) -> None:
         """Every waiting request taken: assessed, its feeds asked for the symbol first and their
-        runs held. Halted: they wait (a pause leaves the asks their fetches)."""
+        runs held. Halted: they wait (a pause leaves the asks their fetches). One whose step raises is never
+        left assessing: waiting again or failed (_taken_failed)."""
+        self.settle_taken_back(store, now)
         paused = lib.collector.pause_state(store, now)
         if paused and paused.get("halt"):
             return
@@ -399,54 +403,88 @@ class Fetcher:
             return  # this one could only refuse them: they are left to the fetcher that can serve them
         assessor = None  # the profiles read once for the tick, when a request comes
         while (r := store.request_next(now)) is not None:
-            if r["kinds"] == (lib.AUDIT,):  # an audit asked for (1.13.0): the auditors' to take, not a feed's run's
-                store.request_update(r["id"], state="collecting", detail="handed to the auditors", now=now)
-                with self.lock:
-                    self.audit_asks[r["id"]] = False
-                self.log(f"fetcher: an audit asked for ({r['by']}): {r['symbol']}")
-                continue
-            if s.offline:
-                # offline: assessed all the same (no request: the plugins' records and the watchlist), so
-                # the page shows which feeds would be asked (the user, 2026-11-03: going through the UI
-                # plugin by plugin on an offline copy)
+            try:
+                if r["kinds"] == (lib.AUDIT,):  # an audit asked for (1.13.0): the auditors' to take, not a feed's run's
+                    store.request_update(r["id"], state="collecting", detail="handed to the auditors", now=now)
+                    with self.lock:
+                        self.audit_asks[r["id"]] = False
+                    self.log(f"fetcher: an audit asked for ({r['by']}): {r['symbol']}")
+                    continue
+                if s.offline:
+                    # offline: assessed all the same (no request: the plugins' records and the watchlist), so
+                    # the page shows which feeds would be asked (the user, 2026-11-03: going through the UI
+                    # plugin by plugin on an offline copy)
+                    try:
+                        assessor = assessor or Assessor(store, s, now)
+                        plan = assessor.assess(r["symbol"], r["kinds"]).as_dict()
+                    except Exception:  # noqa: BLE001 - the plan is a courtesy here
+                        plan = None
+                    asked = f"; it would ask {', '.join(plan['feeds'])}" if plan and plan.get("feeds") else \
+                        f"; {plan['note']}" if plan and plan.get("note") else ""
+                    store.request_update(r["id"], state="failed", plan=plan, now=now,
+                                         detail="nothing fetched: this fetcher is offline (LIMINAL_OFFLINE)" + asked)
+                    continue
                 try:
                     assessor = assessor or Assessor(store, s, now)
-                    plan = assessor.assess(r["symbol"], r["kinds"]).as_dict()
-                except Exception:  # noqa: BLE001 - the plan is a courtesy here
-                    plan = None
-                asked = f"; it would ask {', '.join(plan['feeds'])}" if plan and plan.get("feeds") else \
-                    f"; {plan['note']}" if plan and plan.get("note") else ""
-                store.request_update(r["id"], state="failed", plan=plan, now=now,
-                                     detail="nothing fetched: this fetcher is offline (LIMINAL_OFFLINE)" + asked)
-                continue
+                    a = assessor.assess(r["symbol"], r["kinds"])
+                except Exception as e:  # noqa: BLE001 - this request fails; the next goes on
+                    store.request_update(r["id"], state="failed", detail=f"could not be assessed: {type(e).__name__}: {e}", now=now)
+                    self.log(f"fetcher: {r['symbol']}: could not be assessed: {type(e).__name__}: {e}")
+                    continue
+                if not a.feeds:
+                    store.request_update(r["id"], state="failed", plan=a.as_dict(), detail=a.note or "nothing to collect", now=now)
+                    self.log(f"fetcher: {r['symbol']}: {a.note or 'nothing to collect'}")
+                    continue
+                lib.collector.request_priority(store, a.symbol, now)
+                # a feed another installation is fetching is not started here (its run would be refused): that run
+                # reads the same stack and takes the symbol next
+                away = self.feeds_elsewhere()
+                there = [name for name in a.feeds if name in away]
+                held = [name for name in a.feeds if name not in away and self.hold_feed(name)]
+                detail = f"on {', '.join(held)}" if held else "" if there else "no feed's run could be started"
+                if there:
+                    detail += ("; " if detail else "") + ", ".join(f"{name} fetching on {away[name].instance}" for name in there)
+                if a.retired:
+                    detail += f" (retired since {a.retired}: its history completed, no new data asked for)"
+                store.request_update(r["id"], state="collecting", plan=a.as_dict(), detail=detail, now=now)
+                with self.lock:
+                    self.active[r["id"]] = {"symbol": a.symbol, "feeds": a.feeds, "asked": now, "asked_iso": r["asked_at"],
+                                            "since": time.monotonic(), "detail": detail, "away": set(there)}
+                self.log(f"fetcher: {a.symbol} ({r['by']}): {', '.join(a.feeds)} asked for it first"
+                         + (f"; live from {a.live[0][0]}" if a.live else ""))
+            except Exception as e:  # noqa: BLE001 - never left assessing (the review of 2026-11-21, item 26)
+                if self._taken_failed(store, r, e, now):
+                    break  # a busy database: the rest wait for the next tick too
+
+    def _taken_failed(self, store, r: dict, e: Exception, now: datetime) -> bool:
+        """A request taken whose next step raised. Until 1.13.2 it stayed assessing for the fetcher's life (the
+        review of 2026-11-21, item 26): it was not in self.active, request_reset runs only at the start, so
+        `request --wait` waited for ever. A busy database is waiting again, for the next tick, since trying again
+        can help; anything else fails, in the error's words. True: it waits."""
+        retry = isinstance(e, sqlite3.OperationalError) and any(w in str(e).lower() for w in ("locked", "busy"))
+        state, detail = ("waiting", f"to be taken again: {e}") if retry else \
+            ("failed", f"could not be started: {type(e).__name__}: {e}")
+        with self.lock:
+            self.active.pop(r["id"], None)
+            self.audit_asks.pop(r["id"], None)
+            self.taken_back[r["id"]] = (state, detail)
+        self.log(f"fetcher: {r['symbol']}: {state}: {type(e).__name__}: {e}")
+        self.settle_taken_back(store, now)
+        return retry
+
+    def settle_taken_back(self, store, now: datetime) -> None:
+        """The requests whose step raised, moved on (waiting, or failed). Writing that can meet the same busy
+        database: what is not written yet is tried again on the next tick, never dropped. One moved on
+        meanwhile (cancelled, done) is left as it is."""
+        for rid, (state, detail) in list(self.taken_back.items()):
             try:
-                assessor = assessor or Assessor(store, s, now)
-                a = assessor.assess(r["symbol"], r["kinds"])
-            except Exception as e:  # noqa: BLE001 - this request fails; the next goes on
-                store.request_update(r["id"], state="failed", detail=f"could not be assessed: {type(e).__name__}: {e}", now=now)
-                self.log(f"fetcher: {r['symbol']}: could not be assessed: {type(e).__name__}: {e}")
+                row = store.request_get(rid)
+                if row is not None and row["state"] in ("assessing", "collecting"):
+                    store.request_update(rid, state=state, detail=detail, now=now)
+            except Exception:  # noqa: BLE001 - still busy: the next tick
                 continue
-            if not a.feeds:
-                store.request_update(r["id"], state="failed", plan=a.as_dict(), detail=a.note or "nothing to collect", now=now)
-                self.log(f"fetcher: {r['symbol']}: {a.note or 'nothing to collect'}")
-                continue
-            lib.collector.request_priority(store, a.symbol, now)
-            # a feed another installation is fetching is not started here (its run would be refused): that run
-            # reads the same stack and takes the symbol next
-            away = self.feeds_elsewhere()
-            there = [name for name in a.feeds if name in away]
-            held = [name for name in a.feeds if name not in away and self.hold_feed(name)]
-            detail = f"on {', '.join(held)}" if held else "" if there else "no feed's run could be started"
-            if there:
-                detail += ("; " if detail else "") + ", ".join(f"{name} fetching on {away[name].instance}" for name in there)
-            if a.retired:
-                detail += f" (retired since {a.retired}: its history completed, no new data asked for)"
-            store.request_update(r["id"], state="collecting", plan=a.as_dict(), detail=detail, now=now)
             with self.lock:
-                self.active[r["id"]] = {"symbol": a.symbol, "feeds": a.feeds, "asked": now, "asked_iso": r["asked_at"],
-                                        "since": time.monotonic(), "detail": detail, "away": set(there)}
-            self.log(f"fetcher: {a.symbol} ({r['by']}): {', '.join(a.feeds)} asked for it first"
-                     + (f"; live from {a.live[0][0]}" if a.live else ""))
+                self.taken_back.pop(rid, None)
 
     def check_active(self, store, now: datetime) -> None:
         """Each request being collected: done once every feed of its plan has served the symbol

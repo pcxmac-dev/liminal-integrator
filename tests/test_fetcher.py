@@ -4,6 +4,7 @@ standing pass runs once new data can exist. No process starts here: the feeds' r
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 from argparse import Namespace
@@ -219,6 +220,52 @@ def test_halted_the_requests_wait_and_offline_they_fail(settings, monkeypatch, r
     r2 = store.request_put("TSE:7203", by="page", now=NOW)
     f.tick(store, NOW + timedelta(seconds=1))
     assert "no feed set up here carries XTKS listings" in store.request_get(r2["id"])["detail"]
+    store.close()
+
+
+def test_a_request_taken_is_never_left_assessing_when_a_step_after_it_raises(settings, monkeypatch, runs):
+    """The review of 2026-11-21, item 26: a step after request_next that raised left the request assessing for the
+    fetcher's life (not in self.active; request_reset runs only at the start), and `request --wait` waited for ever."""
+    f, log = _fetcher(settings, monkeypatch)
+    f.last_pass, f.next_due = time.monotonic(), NOW + timedelta(days=1)
+    store = lib.Store(settings.db_path, check_same_thread=False)
+    store.watch("massive", ["SPCX"], "minute", exchange="XNAS")
+    real_priority, real_update = lib.collector.request_priority, store.request_update
+    busy = {"priority": 1, "update": 0}
+
+    def priority(*a, **k):  # the kv write meeting a busy database, as many times as asked
+        if busy["priority"]:
+            busy["priority"] -= 1
+            raise sqlite3.OperationalError("database is locked")
+        return real_priority(*a, **k)
+
+    def update(*a, **k):
+        if busy["update"]:
+            busy["update"] -= 1
+            raise sqlite3.OperationalError("database is locked")
+        return real_update(*a, **k)
+    monkeypatch.setattr(lib.collector, "request_priority", priority)
+    monkeypatch.setattr(store, "request_update", update)
+    r = store.request_put("SPCX", by="chart", now=NOW)
+    f.tick(store, NOW)  # a busy database: trying again can help, so it waits
+    row = store.request_get(r["id"])
+    assert row["state"] == "waiting" and "database is locked" in row["detail"] and r["id"] not in f.active
+    f.tick(store, NOW + timedelta(seconds=1))  # and the next tick takes it
+    assert store.request_get(r["id"])["state"] == "collecting" and r["id"] in f.active
+    # the write putting it back meets the same busy database: it is tried again on the next tick, then taken
+    r2 = store.request_put("MSFT", by="chart", now=NOW)
+    busy.update(priority=1, update=1)
+    f.tick(store, NOW + timedelta(seconds=2))
+    assert store.request_get(r2["id"])["state"] == "assessing" and f.taken_back
+    f.tick(store, NOW + timedelta(seconds=3))
+    assert store.request_get(r2["id"])["state"] == "collecting" and r2["id"] in f.active and not f.taken_back
+    # a step that trying again cannot help: failed, in the error's words
+    monkeypatch.setattr(f, "feeds_elsewhere", lambda: (_ for _ in ()).throw(RuntimeError("the claims could not be read")))
+    r3 = store.request_put("AAPL", by="chart", now=NOW)
+    f.take_requests(store, NOW + timedelta(seconds=4))
+    row = store.request_get(r3["id"])
+    assert row["state"] == "failed" and "RuntimeError: the claims could not be read" in row["detail"]
+    assert r3["id"] not in f.active and store.request_next(NOW) is None
     store.close()
 
 
