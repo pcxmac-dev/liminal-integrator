@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.13.4 (2026-11-24)
+
+Codebase on the integrator's page (Monday list item 15: "Codebase in the login's, the integrator's and the charts'
+pages (the platform has it)"; the user, 2026-11-16: "this class will be added to all the 'apps' just like
+connections"):
+- The integrator's code base is the library's object its frame holds (`IntegratorApp.codebase`, liminal-libs 1.59.0):
+  its repositories, how far each is behind its remote, each language's share, what the integrator runs from (its own
+  code, the library, its plugins). Its page draws it as a view of its rail with liminal-charts 0.2.4, which also passes
+  the page's `POST /api/codebase/fetch` (the remotes asked, on the user's click) to this frame; until then the page's
+  `GET /api/codebase` already reached it and the fetch was a 404.
+- A test holds the route's shape through the frame's own server (a workspace of the test's own, a stand-in runner: no
+  git runs).
+
 ## 1.13.3 (2026-11-24)
 
 The review of 2026-11-21 on your desktop (Monday list item 26), its P3s in the integrator:
