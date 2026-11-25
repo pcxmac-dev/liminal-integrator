@@ -6,7 +6,7 @@ written here twice."""
 from __future__ import annotations
 
 from liminal_libs import auditing, claims, collector, config, freshness, layout, proc, runner, sourcing, systemd  # noqa: F401
-from liminal_libs import host, mongo  # noqa: F401
+from liminal_libs import host, lifecycle, mongo  # noqa: F401
 from liminal_libs.apps import App, EnvironmentLogin, Login, Refused, attach_registry  # noqa: F401
 from liminal_libs.host import FETCHER, Host, attach_fetcher, feed_run, history_run  # noqa: F401
 from liminal_libs.host import wait_for_fetcher, wait_for_requests  # noqa: F401

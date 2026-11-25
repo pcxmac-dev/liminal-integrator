@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.14.0 (2026-11-24)
+
+An end in good order (Monday list item 38; the shutdown audit of 2026-11-24: "service: ended" was in no day's log, and
+the derived-bar build ran on 20-60 minutes past a stop), on liminal-libs 1.87.0's lifecycle:
+- **The extras and the auditors end when the fetcher lets go.** `sync --extras-only` and `audit run` are started
+  through `lifecycle.spawn(owner="integrator", tied=True)`: written in the process ledger and tied to the fetcher (its
+  job object on Windows, PR_SET_PDEATHSIG on Linux), so they end with it however it ends. Spawned children rather than
+  held hosts: a host outlives a fetcher that is killed, and the auditors' code is the integrator's, not the hosts'.
+  `let_go` (the fetcher's stop) tells each TERM, its own stop event on Windows (`LIMINAL_STOP_EVENT` in its
+  environment, a console-less pythonw hears no signal) and SIGTERM elsewhere, waits for both together up to
+  `CHILD_STOP_S` (10 s), then kills what is left with its tree (`end_children`). They were left to finish.
+- **The auditors stop between series.** `audit run` listens for that stop (`fetcher.listen_for_stop`) and passes it to
+  `Sweep.run(stop=)`; stopped, no sweep is begun, the sweep's cursor keeps its place and an audit asked for is left
+  open for the next run rather than marked done.
+- **The fetcher is a part of its app.** `IntegratorApp.parts()` is the fetcher in the fetcher host's process
+  (`Fetcher.signal`: its loop ended and waited for until its runs are let go, its children ended and its store
+  closed), and the host's end now stops the integrator's app (`secure=app.stop`): the fetcher's writes secured first,
+  then the plugins told together under one deadline and let go. They were left attached at the host's end.
+- **The service ends on its stop event.** `service run` / `serve` waits on `Local\liminal-stop-integrator` (which
+  liminal-signal sets) as well as SIGINT/SIGTERM, and at its end gives the page's server 5 s to go down, lets the
+  fetcher go with a word (a detach: the fetcher host ends at once, where a service that was killed left it waiting
+  out its idle time) and stops the page's frame.
+- Tests on stand-ins (`test_stopping.py`): a spawn whose children record TERM and KILL (one heeding TERM, one killed at
+  the deadline, by a stand-in clock), both on the stop event and on SIGTERM; the app's parts and the host's secure;
+  the signal waiting for the run's end; the auditors stopping; a child hearing its event; the service ending on its
+  event alone with the fetcher detached.
+
 ## 1.13.4 (2026-11-24)
 
 Codebase on the integrator's page (Monday list item 15: "Codebase in the login's, the integrator's and the charts'

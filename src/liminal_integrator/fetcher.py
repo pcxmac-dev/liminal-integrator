@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -64,6 +65,9 @@ NAME_VAR = "LIMINAL_INTEGRATOR_NAME"  # this integrator's name when it is not th
 SERVE_TIMEOUT_S = 6 * 3600  # a request whose feeds have not served it by then has failed
 STATUS_EVERY_S = 30.0  # the status written at least this often while something goes on
 SWEEP_LOOK_S = 60.0  # whether the auditors' sweep is due is looked at this often (auditors.py)
+OWNER = "integrator"  # the owner the extras and the auditors are written under in the process ledger (lifecycle)
+CHILD_STOP_S = 10.0  # the extras and the auditors are given this long to stop when asked, then killed with their trees
+STOP_VAR = "LIMINAL_STOP_EVENT"  # a child's own stop event (Windows), named in its environment (listen_for_stop)
 Log = Callable[[str], None]
 
 
@@ -280,6 +284,7 @@ class Fetcher:
         # (run_host) with its login, the one way to their keys (the user environment until a daemon
         # holds a login session of its own).
         self.app = IntegratorApp(log=log, login=login)
+        self.app.fetcher = self  # one of its parts (IntegratorApp.parts): its writes secured before its plugins end
         self.login = self.app.login
         self.stop = threading.Event()
         self.wake = threading.Event()
@@ -289,6 +294,18 @@ class Fetcher:
         self.history = None  # the closed months' copy, held
         self.extras = None  # the extras' process
         self.auditors = None  # the auditors' process (auditors.py): the sweep, and an audit asked for
+        # How the extras and the auditors are started and told to stop (1.14.0, Monday list item 38): lifecycle.spawn,
+        # tied to this process (its job object on Windows, PR_SET_PDEATHSIG on Linux), each with a stop event of its
+        # own on Windows (a console-less pythonw hears no signal), SIGTERM elsewhere. A test's stand-ins replace these.
+        self.spawner = lib.lifecycle.spawn
+        self.by_event = os.name == "nt"
+        self.make_event = lib.lifecycle.StopEvent
+        self.set_event = lib.lifecycle.set_stop_event
+        self.stop_events: dict[int, object] = {}  # id(child) -> the stop event held for it (Windows)
+        self.clock, self.sleep = time.monotonic, time.sleep  # what the children's end is timed by
+        self._spawned = 0
+        self.running = False  # run is at work (its writes not yet secured)
+        self.ended = threading.Event()  # set once run's end has secured its writes (signal waits for it)
         self.audit_asks: dict[int, bool] = {}  # an audit asked for -> whether a process was started for it
         self._sweep_looked = 0.0  # when the sweep was last looked at for being due (monotonic)
         self.workers: threading.Thread | None = None  # the plugins that fetch on their own
@@ -349,6 +366,15 @@ class Fetcher:
         request)."""
         if stop is not None:
             self.stop = stop
+        self.ended.clear()
+        self.running = True
+        try:
+            self._run()
+        finally:
+            self.running = False
+            self.ended.set()
+
+    def _run(self) -> None:
         store = lib.Store(self.db_path, check_same_thread=False)
         here = None
         try:
@@ -381,6 +407,20 @@ class Fetcher:
                 except Exception:  # noqa: BLE001 - given back at exit all the same
                     pass
             store.close()
+
+    def signal(self, sig, deadline: float, sender=None) -> dict:  # noqa: ARG002 - the lifecycle's signature
+        """Told to end as a part of its app (1.14.0; IntegratorApp.parts, told before the plugins): TERM ends the
+        loop and waits, until `deadline`, for its end to have let go of the runs, ended the extras and the auditors
+        and closed its store, so its writes are secured before the plugins are let go; KILL ends the extras' and the
+        auditors' trees first, then the same."""
+        sig = lib.lifecycle.Signal.of(sig)
+        if sig is lib.lifecycle.Signal.KILL:
+            self.end_children(timeout=0)
+        self.stop.set()
+        self.wake.set()
+        if self.running:
+            self.ended.wait(lib.lifecycle.left(deadline))
+        return {"name": "fetcher", "signal": sig.value, "ended": not self.running}
 
     def tick(self, store, now: datetime) -> None:
         self.ticks += 1
@@ -617,7 +657,9 @@ class Fetcher:
                 self.history = None
 
     def let_go(self) -> None:
-        """Every run let go (each stops at its next request), the extras left to finish."""
+        """Every run let go (each stops at its next request); the extras and the auditors told to stop and waited
+        for (end_children). Until 1.14.0 the extras were left to finish: the derived-bar build ran on 20-60 minutes
+        past a stop, holding MongoDB and the `post` claim (the shutdown audit of 2026-11-24)."""
         with self.lock:
             for att in list(self.feeds.values()) + [self.history]:
                 if att is not None:
@@ -626,6 +668,80 @@ class Fetcher:
                     except Exception:  # noqa: BLE001 - a run gone already
                         pass
             self.feeds, self.by_pass, self.history = {}, set(), None
+        self.end_children()
+
+    # -- the extras' and the auditors' processes (1.14.0, Monday list item 38) ------------------
+    def end_children(self, timeout: float | None = None) -> dict:
+        """The extras and the auditors ended in good order: each told TERM (its stop event on Windows, SIGTERM
+        elsewhere: both look for it between symbols and series and give back what they hold), waited for together
+        until `timeout` (CHILD_STOP_S), then what is left killed with its tree (KILL at once with `timeout` 0).
+        Returns {kind: terminated | killed | gone}."""
+        timeout = CHILD_STOP_S if timeout is None else max(float(timeout), 0.0)
+        clock, sleep = self.clock, self.sleep
+        with self.lock:
+            children = [(kind, child) for kind, child in (("extras", self.extras), ("auditors", self.auditors))
+                        if child is not None]
+        out: dict[str, str] = {}
+        going = []
+        for kind, child in children:
+            if child.poll() is not None:
+                out[kind] = "gone"
+                self._forget_child(child)
+            else:
+                going.append((kind, child))
+        if timeout > 0:
+            for kind, child in going:
+                self._term(child)
+            end = clock() + timeout
+            while clock() < end and any(child.poll() is None for _, child in going):
+                sleep(min(lib.lifecycle.STEP_S, max(end - clock(), 0.0)))
+        for kind, child in going:
+            if child.poll() is not None:
+                out[kind] = "terminated"
+            else:
+                self._kill(child)
+                out[kind] = "killed"
+                self.log(f"fetcher: the {kind} did not end within {timeout:g} s of being asked to stop: killed")
+            self._forget_child(child)
+        if out:
+            self.log("fetcher: " + ", ".join(f"the {k} {how}" for k, how in out.items()))
+        return out
+
+    def _term(self, child) -> None:
+        event = self.stop_events.get(id(child))
+        if self.by_event:
+            if event is None or not self.set_event(getattr(event, "name", "")):
+                self.log("fetcher: a child's stop event could not be set: it is killed at its deadline")
+            return
+        try:
+            child.send_signal(signal.SIGTERM)
+        except (OSError, ValueError):
+            pass  # ended already
+
+    def _kill(self, child) -> None:
+        """The child and what it started ended now: its tree from the ledger's row (the venv's redirector and the
+        base interpreter it started), then the child itself."""
+        pid = getattr(child, "pid", None)
+        rows = [r for r in lib.lifecycle.mine(OWNER) if r.pid == pid]
+        if rows:
+            lib.lifecycle.end_trees([r.as_proc() for r in rows], lib.lifecycle.Signal.KILL, 0, protect={os.getpid()})
+        try:
+            child.kill()
+        except (OSError, ValueError):
+            pass
+
+    def _forget_child(self, child) -> None:
+        event = self.stop_events.pop(id(child), None)
+        if event is not None:
+            try:
+                event.close()
+            except Exception:  # noqa: BLE001 - a handle given back at exit all the same
+                pass
+        with self.lock:
+            if self.extras is child:
+                self.extras = None
+            if self.auditors is child:
+                self.auditors = None
 
     # -- the auditors ----------------------------------------------------------------------------
     def check_auditors(self, store, now: datetime) -> None:
@@ -669,7 +785,7 @@ class Fetcher:
             return
         exe = Path(sys.executable)
         quiet = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
-        self.auditors = self._spawn([str(quiet), "-m", "liminal_integrator", "audit", "run"])
+        self.auditors = self._spawn([str(quiet), "-m", "liminal_integrator", "audit", "run"], "auditors")
         with self.lock:
             self.audit_asks = {i: True for i in self.audit_asks}
         self.log("fetcher: the auditors started in a process of their own ("
@@ -730,7 +846,7 @@ class Fetcher:
         if self.extras is None or self.extras.poll() is not None:
             exe = Path(sys.executable)
             quiet = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
-            self.extras = self._spawn([str(quiet), "-m", lib.host.APP_MODULE, "sync", "--extras-only"])
+            self.extras = self._spawn([str(quiet), "-m", lib.host.APP_MODULE, "sync", "--extras-only"], "extras")
         if lib.plugin_fetchers() and (self.workers is None or not self.workers.is_alive()):
             self.workers = threading.Thread(target=self._run_plugins, name="fetcher-plugins", daemon=True)
             self.workers.start()
@@ -751,9 +867,28 @@ class Fetcher:
         except Exception as e:  # noqa: BLE001 - the plugins' workers failing is theirs
             self.log(f"fetcher: the plugins' own fetching failed: {type(e).__name__}: {e}")
 
-    def _spawn(self, args: list[str]):
-        return subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                **lib.proc.no_window())
+    def _spawn(self, args: list[str], kind: str = "child"):
+        """A process of the fetcher's own (the extras, the auditors) through lifecycle.spawn (1.14.0): written in
+        the ledger as the integrator's, tied to this process (it ends with it, however it ends), no window; on
+        Windows with a stop event of its own named in its environment (STOP_VAR), made here before it starts so it
+        can be set at any time. Until 1.14.0 a bare Popen that nothing tied to the fetcher (the shutdown audit)."""
+        env = dict(os.environ)
+        event = None
+        if self.by_event:
+            self._spawned += 1
+            name = lib.lifecycle.stop_event_name(f"integrator-{kind}-{os.getpid()}-{self._spawned}")
+            event = self.make_event(name)
+            env[STOP_VAR] = name
+        try:
+            child = self.spawner(args, owner=OWNER, kind=kind, tied=True, env=env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except BaseException:
+            if event is not None:
+                event.close()
+            raise
+        if event is not None:
+            self.stop_events[id(child)] = event
+        return child
 
     # -- the status ----------------------------------------------------------------------------
     def write_status(self, store, now: datetime, force: bool = False) -> None:
@@ -770,6 +905,36 @@ class Fetcher:
         lib.write_status(store, st)
 
 
+def listen_for_stop(env=None, k32=None, every: float = 0.25) -> threading.Event:
+    """A child's side of being asked to stop (1.14.0; the auditors' process, `audit run`): an Event set by SIGTERM
+    (SIGBREAK on Windows; on the main thread only), and on Windows by the stop event its starter named in STOP_VAR,
+    looked at every `every` seconds. Its work looks at it between series and ends in good order. `env`, `k32`: a
+    test's stand-ins."""
+    stop = threading.Event()
+    if threading.current_thread() is threading.main_thread():
+        for name in ("SIGTERM", "SIGBREAK"):
+            number = getattr(signal, name, None)
+            if number is not None:
+                try:
+                    signal.signal(number, lambda signum, frame: stop.set())
+                except (OSError, ValueError):
+                    pass
+    name = (os.environ if env is None else env).get(STOP_VAR, "")
+    if name and (os.name == "nt" or k32 is not None):
+        event = lib.lifecycle.StopEvent(name, k32=k32)
+
+        def watch() -> None:
+            try:
+                while not stop.wait(every):
+                    if event.is_set():
+                        stop.set()
+            finally:
+                event.close()
+
+        threading.Thread(target=watch, name="stop-event", daemon=True).start()
+    return stop
+
+
 def page_url_of(port: int | None) -> str | None:
     """Where the integrator serves its page and the data API (service.py): None without a port."""
     return f"http://127.0.0.1:{port}/" if port else None
@@ -779,7 +944,9 @@ def run_host(settings, log: Log | None = None, port: int | None = None, rescan: 
     """The fetcher's process: the host `fetcher` of this database and the fetcher's work under it,
     over its pipe alone (no HTTP: the integrator's own process serves the page and the data API at
     `port`, LIMINAL_FETCHER_PORT by default, which the status names). `rescan` is the integrator's
-    page server's now (kept for the callers). Returns why the host stopped (its clients gone)."""
+    page server's now (kept for the callers). Returns why the host stopped (its clients gone). Once its work has
+    ended, the integrator's app is stopped (1.14.0): its parts first (the fetcher, its writes secured), then its
+    plugins told together under one deadline and let go; until then they were left attached at the host's end."""
     log = log or lib.log_to(settings.db_path)
     h = lib.Host(HOST, settings.db_path, log=log)
     f = Fetcher(settings, log)
@@ -787,4 +954,4 @@ def run_host(settings, log: Log | None = None, port: int | None = None, rescan: 
     attached = f.app.attach_plugins()  # the stock-data plugins, with the integrator's login
     log(f"fetcher: {len(attached)} plugins attached: {', '.join(attached) or 'none'}")
     f.page_url = page_url_of(page_port() if port is None else port)
-    return h.serve(f.run, handle=f.handle)
+    return h.serve(f.run, secure=f.app.stop, handle=f.handle)

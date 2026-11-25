@@ -48,6 +48,14 @@ class IntegratorApp(lib.App):
         self.db_path = Path(db_path) if db_path is not None else None  # its database: the data folder is beside it
         self._databases = None
         self._databases_lock = threading.Lock()
+        self.fetcher = None  # the fetcher whose app this is (fetcher.Fetcher sets it): one of its parts
+
+    def parts(self) -> tuple:
+        """What it includes besides its login and its plugins, told a signal before the plugins (1.14.0, Monday list
+        item 38): the fetcher in the fetcher host's process, so its loop ends and its writes are secured (the runs let
+        go, the extras and the auditors ended, its store closed) before a plugin it uses is let go. None elsewhere
+        (the page's frame in the service)."""
+        return (self.fetcher,) if self.fetcher is not None else ()
 
     def attach_plugins(self, only: str | None = None) -> list[str]:
         """Every plugin of this system the registry loaded (`only`: another system), attached here with

@@ -103,10 +103,12 @@ def ask(app, body: dict) -> dict:
             "lines": ["The fetcher hands it to the auditors within a few seconds; what they find shows here."]}
 
 
-def run(settings, log=print, sweep: bool = False, symbols=()) -> dict:
+def run(settings, log=print, sweep: bool = False, symbols=(), stop=None) -> dict:
     """The auditors' process's work, once: the audits asked for (the fetcher's stack), these `symbols` too, a sweep
     when one is due or asked (`sweep`), else what waits in the cache. Returns what was done, in numbers. A copy that
-    reads only, and a database another auditors' process is on, are left alone and said."""
+    reads only, and a database another auditors' process is on, are left alone and said. `stop` (1.14.0): asked
+    before each series (Sweep.run's); stopped, the sweep's cursor keeps its place and an audit asked for is left
+    open, handed to the auditors again by the next fetcher."""
     db = Path(settings.db_path)
     if settings.read_only:
         log("auditors: this copy reads only (LIMINAL_READONLY): nothing is audited from here")
@@ -115,13 +117,13 @@ def run(settings, log=print, sweep: bool = False, symbols=()) -> dict:
     lib.auditing.set_policy(policy)
     try:
         with lib.claims.exclusive(db, CLAIM, what="the auditors", log=log):
-            return _work(settings, db, policy, log, sweep, symbols)
+            return _work(settings, db, policy, log, sweep, symbols, stop)
     except lib.claims.Taken as e:
         log(f"auditors: at work on this database already ({e})")
         return {"note": "at work already"}
 
 
-def _work(settings, db: Path, policy, log, sweep: bool, symbols) -> dict:
+def _work(settings, db: Path, policy, log, sweep: bool, symbols, stop=None) -> dict:
     out: dict = {}
     with lib.Store(db) as store:
         asks = [r for r in store.requests_open() if r["kinds"] == (lib.AUDIT,)]
@@ -137,9 +139,9 @@ def _work(settings, db: Path, policy, log, sweep: bool, symbols) -> dict:
                     unknown.append(symbol)
         sweeper = lib.auditing.Sweep(store, feeds=lib.feed_profiles(settings), policy_=policy, log=log)
         if only:
-            out["symbols"] = sweeper.run(only=only)
-        if sweep or sweep_due(store, policy):
-            out["sweep"] = sweeper.run()
+            out["symbols"] = sweeper.run(only=only, stop=stop)
+        if (sweep or sweep_due(store, policy)) and not (stop is not None and stop()):
+            out["sweep"] = sweeper.run(stop=stop)
         elif not only:  # neither a sweep nor a symbol: what waits in the cache, and the cache kept in order
             closed = lib.auditing.recover(store, None, log)
             audited = lib.auditing.audit_pulls(store, policy_=policy, log=log, budget_s=policy.sweep_minutes * 60.0)
@@ -147,8 +149,12 @@ def _work(settings, db: Path, policy, log, sweep: bool, symbols) -> dict:
             out["cache"] = {"recovered": closed, "pulls": len(audited),
                             "mismatch": sum(1 for a in audited if a.result == "mismatch"), **kept}
         words = said(out) + (f"; not watched by any feed: {', '.join(unknown)}" if unknown else "")
-        for r in asks:
-            store.request_update(r["id"], state="done", detail=words)
+        if stop is not None and stop():
+            out["stopped"] = True
+            words += "; asked to stop: the rest at the next run"
+        else:
+            for r in asks:
+                store.request_update(r["id"], state="done", detail=words)
     log(f"auditors: {words}")
     return out
 
@@ -195,6 +201,9 @@ def command(args, settings) -> int:
             print(f"    #{f['id']:<5} {f['state']:<8} {f['kind']:<12} {f['feed']}:{f['ticker'] or '*':<10} "
                   f"{f['timespan'] or '':<6} {f['count']:,}")
         return 0
-    out = run(settings, log, sweep=args.action == "sweep", symbols=args.symbols)
+    from .fetcher import listen_for_stop
+
+    stop = listen_for_stop()  # its starter's TERM (1.14.0): its stop event on Windows, SIGTERM elsewhere
+    out = run(settings, log, sweep=args.action == "sweep", symbols=args.symbols, stop=stop.is_set)
     print(said(out) if "note" not in out else out["note"])
     return 0

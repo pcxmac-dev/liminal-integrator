@@ -52,6 +52,8 @@ RESTART_SECONDS = 10.0  # the daemon starts the fetcher again this long after it
 CHECK_SECONDS = 5.0
 QUIET_SECONDS = 120.0  # no page in touch for this long: the fetcher let go (LIMINAL_QUIET_SECONDS)
 QUIET_CHECK_SECONDS = 15.0
+STOP_LOOK_S = 0.5  # its stop event (Windows) is looked at this often
+PAGE_DOWN_S = 5.0  # what the page's server is given to end once told to
 Log = Callable[[str], None]
 
 
@@ -171,6 +173,31 @@ class FetcherLink:
         if on_quiet is not None and not touched:
             on_quiet()
         return True
+
+
+def stop_event():
+    """The integrator's stop event (1.14.0; liminal-libs 1.87.0's stop event liminal-stop-integrator, which liminal-signal
+    sets before it ends anything): a console-less pythonw from the logon task hears no Ctrl+C and no SIGTERM, and
+    `schtasks /End` kills it outright. None off Windows, where SIGTERM is heard."""
+    from .app import IntegratorApp
+
+    if os.name != "nt":
+        return None
+    return lib.lifecycle.StopEvent(lib.lifecycle.stop_event_name(IntegratorApp.NAME))
+
+
+def watch_stop_event(event, stop: threading.Event, log: Log = print, every: float | None = None) -> None:
+    """`stop` set once `event` is (a thread, until `stop`); the event given back at the end."""
+    try:
+        while not stop.wait(STOP_LOOK_S if every is None else every):
+            if event.is_set():
+                log("service: asked to stop (its stop event): the page goes down, the fetcher is let go")
+                stop.set()
+    finally:
+        try:
+            event.close()
+        except Exception:  # noqa: BLE001 - given back at exit all the same
+            pass
 
 
 def python_quiet() -> Path:
@@ -425,7 +452,15 @@ class Service:
                     signal.signal(sig, ending)
                 except (ValueError, OSError):
                     pass  # not the main thread (a test): stopped by its event
+        # its stop event (1.14.0, Monday list item 38): until then the service was always killed, never stopped (the
+        # shutdown audit of 2026-11-24: "service: ended" was in no day's log), and the fetcher host waited out its
+        # idle time for a client that never said it had gone
+        event = stop_event()
+        if event is not None:
+            threading.Thread(target=watch_stop_event, args=(event, stop, log), name="service-stop-event",
+                             daemon=True).start()
         failed: list[Exception] = []  # why the page could not be served, when it could not
+        link = frame = served = None
         port = fetcher.page_port() if port is None else port
         if port is None and not daemon:
             log("service: LIMINAL_FETCHER_PORT is off (no page) and the fetcher is not held (--daemon): nothing to run")
@@ -446,12 +481,14 @@ class Service:
                     log(f"service: the page could not be served ({type(e).__name__}: {e}); the service ends")
                     stop.set()
 
-            threading.Thread(target=page,
-                             kwargs={"link": link, "open_browser": open_browser, "log": log, "stop": stop,
-                                     "rescan": not os.environ.get("LIMINAL_NO_RESCAN"), "reload_settings": lib.config.load_settings,
-                                     "frame": IntegratorApp(log=log, db_path=settings.db_path),  # its databases: the view's
-                                     "until_quiet": self.until_quiet and not daemon},
-                             name="service-page", daemon=True).start()
+            frame = IntegratorApp(log=log, db_path=settings.db_path)  # its databases: the view's
+            served = threading.Thread(target=page,
+                                      kwargs={"link": link, "open_browser": open_browser, "log": log, "stop": stop,
+                                              "rescan": not os.environ.get("LIMINAL_NO_RESCAN"),
+                                              "reload_settings": lib.config.load_settings, "frame": frame,
+                                              "until_quiet": self.until_quiet and not daemon},
+                                      name="service-page", daemon=True)
+            served.start()
             log(f"service: the integrator's page and data API at {page_url(port)}; the fetcher runs while a page is in touch"
                 + ("; this server ends once no page has been in touch for a while" if self.until_quiet and not daemon else ""))
         if settings.read_only:
@@ -461,6 +498,7 @@ class Service:
             log("service: up until told to stop (Ctrl+C, a stop)")
             while not stop.wait(CHECK_SECONDS):
                 pass
+            self._end(served, link, frame)
             if failed:
                 raise failed[0]
             log("service: ended; the page is down, the fetcher let go")
@@ -480,10 +518,27 @@ class Service:
                 break
             log(f"service: the fetcher ended; started again in {RESTART_SECONDS:g} s")
             stop.wait(RESTART_SECONDS)
+        self._end(served, link, frame)
         if failed:
             raise failed[0]
         log("service: ended; the fetcher let go")
         return 0
+
+
+    @staticmethod
+    def _end(served, link, frame) -> None:
+        """Its end in good order (1.14.0): the page's server given PAGE_DOWN_S to go down, the page's hold on the
+        fetcher let go with a word (a detach: the fetcher host ends at once, where a process that merely ended left
+        it waiting), and the page's frame stopped (its login and the plugins it holds)."""
+        if served is not None and served is not threading.current_thread():
+            served.join(PAGE_DOWN_S)
+        if link is not None:
+            link.let_go()
+        if frame is not None:
+            try:
+                frame.stop()
+            except Exception:  # noqa: BLE001 - the service ends all the same
+                pass
 
 
 # -- the command line's: each a Service's --------------------------------------------------------

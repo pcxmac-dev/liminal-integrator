@@ -173,12 +173,19 @@ class Process:
     def poll(self):
         return 0 if self.ended else None
 
+    def send_signal(self, number):  # the fetcher's end tells it to stop (1.14.0)
+        self.ended = True
+
+    def kill(self):
+        self.ended = True
+
 
 def _fetcher(settings, monkeypatch):
     log: list[str] = []
     f = fetcher.Fetcher(settings, log.append)
     started: list[Process] = []
-    monkeypatch.setattr(f, "_spawn", lambda args: started.append(Process(args)) or started[-1])
+    monkeypatch.setattr(f, "_spawn", lambda args, kind="": started.append(Process(args)) or started[-1])
+    f.by_event = False  # the stand-in hears SIGTERM's way (send_signal)
     return f, log, started
 
 

@@ -7,7 +7,6 @@ import json
 import sqlite3
 import threading
 import time
-from argparse import Namespace
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -58,10 +57,28 @@ def runs(monkeypatch):
     return made
 
 
+class Spawned:
+    """A stand-in for the extras' or the auditors' process (fetcher._spawn): runs until told TERM (1.14.0: the
+    fetcher's end tells it so, and kills it at its deadline)."""
+
+    def __init__(self, args=None):
+        self.args, self.code = args, None
+
+    def poll(self):
+        return self.code
+
+    def send_signal(self, number):
+        self.code = 0
+
+    def kill(self):
+        self.code = -9
+
+
 def _fetcher(settings, monkeypatch):
     log: list[str] = []
     f = fetcher.Fetcher(settings, log.append)
-    monkeypatch.setattr(f, "_spawn", lambda args: Namespace(args=args, poll=lambda: None))
+    monkeypatch.setattr(f, "_spawn", lambda args, kind="": Spawned(args))
+    f.by_event = False  # the stand-in hears SIGTERM's way (send_signal)
     return f, log
 
 
@@ -276,7 +293,7 @@ def test_the_standing_pass_holds_every_feed_and_waits_for_new_data(settings, mon
     monkeypatch.setattr(lib, "feed_closed", lambda s, n: n == "tiingo")  # a closed archive: not run
     f, log = _fetcher(settings, monkeypatch)
     spawned: list[list[str]] = []
-    monkeypatch.setattr(f, "_spawn", lambda args: spawned.append(args) or Namespace(poll=lambda: None))
+    monkeypatch.setattr(f, "_spawn", lambda args, kind="": spawned.append(args) or Spawned(args))
     set_up = {n for n, p in lib.feed_profiles(settings).items() if p.assets}  # with keys, or keyless (the crypto exchanges)
     store = lib.Store(settings.db_path, check_same_thread=False)
     assert f.pass_due(store, NOW)  # never run

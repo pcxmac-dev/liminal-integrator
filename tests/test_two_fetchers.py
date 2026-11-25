@@ -64,10 +64,28 @@ def runs(monkeypatch):
     return made
 
 
+class Spawned:
+    """A stand-in for the extras' or the auditors' process (fetcher._spawn): runs until told TERM (1.14.0: the
+    fetcher's end tells it so, and kills it at its deadline)."""
+
+    def __init__(self, args=None):
+        self.args, self.code = args, None
+
+    def poll(self):
+        return self.code
+
+    def send_signal(self, number):
+        self.code = 0
+
+    def kill(self):
+        self.code = -9
+
+
 def _fetcher(settings, monkeypatch):
     log: list[str] = []
     f = fetcher.Fetcher(settings, log.append)
-    monkeypatch.setattr(f, "_spawn", lambda args: Namespace(args=args, poll=lambda: None))
+    monkeypatch.setattr(f, "_spawn", lambda args, kind="": Spawned(args))
+    f.by_event = False  # the stand-in hears SIGTERM's way (send_signal)
     f.last_pass, f.next_due = time.monotonic(), NOW + timedelta(days=1)  # no standing pass in these
     return f, log
 
