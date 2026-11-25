@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.16.0 (2026-11-25)
+
+A store's pick naming an instance (Monday list item 10; item 30, step 7), on liminal-libs 1.91.0:
+- **Where the picks are opened.** A plugin's documents go where its Store pick says (liminal-libs `stores.py`): a bare
+  engine as before, or an instance added on the platform's Databases section, `engine:instance` (`postgres:main`).
+  The fetcher's writes (the plugins' own fetching, the headlines) open such an instance through its database plugin's
+  `open`, in this process, with the integrator's login; no hop, and nothing moved: what the store left holds stays
+  where it is. An instance that cannot be used is refused in words where it is written, never written elsewhere.
+- The fetcher's app knows its database (`IntegratorApp(..., db_path=)`), so its database plugins speak of the fetcher's
+  data folder (a SQLite file added there, a store's instances read for it).
+- The fetcher's end closes the connections kept to those instances after its store (`lib.close_instances`), so each
+  is let go after its last write.
+- The libs floor is 1.91.0.
+
 ## 1.15.0 (2026-11-25)
 
 The integrator inherits the platform core (Monday list item 30, step 4; the user, 2026-11-24: "through the rust

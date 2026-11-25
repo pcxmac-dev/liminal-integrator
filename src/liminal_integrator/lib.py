@@ -27,6 +27,7 @@ from liminal_libs.storage.link import LinkError  # noqa: F401
 from liminal_libs.storage.requests import AUDIT, EVERYTHING, KINDS, OPEN, STATUS_KEY, WAITING  # noqa: F401
 from liminal_libs.storage.requests import read_status, write_status  # noqa: F401
 from liminal_libs.stores import history_due  # noqa: F401
+from liminal_libs.stores import close_instances, forget_instances  # noqa: F401 - the instances picks name (1.91.0)
 from liminal_libs.symbols import resolve  # noqa: F401
 
 

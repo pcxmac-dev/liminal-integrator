@@ -282,8 +282,10 @@ class Fetcher:
         self.log = log
         # The integrator as an app of the frame (app.py): its plugins, attached at the host's start
         # (run_host) with its login, the one way to their keys (the user environment until a daemon
-        # holds a login session of its own).
-        self.app = IntegratorApp(log=log, login=login)
+        # holds a login session of its own). 1.16.0: with this fetcher's database, so its database plugins speak of
+        # the same data folder when a store's pick names one of their instances (liminal-libs 1.91.0 stores.py: the
+        # instance is opened through its plugin's `open`, here, in this process).
+        self.app = IntegratorApp(log=log, login=login, db_path=self.db_path)
         self.app.fetcher = self  # one of its parts (IntegratorApp.parts): its writes secured before its plugins end
         self.login = self.app.login
         self.stop = threading.Event()
@@ -407,6 +409,12 @@ class Fetcher:
                 except Exception:  # noqa: BLE001 - given back at exit all the same
                     pass
             store.close()
+            # 1.16.0: the connections this process kept to the instances its plugins' picks name (a PostgreSQL or
+            # MariaDB database, a MongoDB server the user added) closed with its store, each after its last write
+            try:
+                lib.close_instances()
+            except Exception:  # noqa: BLE001 - one that will not close is gone with the process
+                pass
 
     def signal(self, sig, deadline: float, sender=None) -> dict:  # noqa: ARG002 - the lifecycle's signature
         """Told to end as a part of its app (1.14.0; IntegratorApp.parts, told before the plugins): TERM ends the
