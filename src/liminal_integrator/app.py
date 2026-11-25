@@ -8,16 +8,25 @@ app's serve_integrator, which answers /api/interface with it and passes it the r
 answer itself); the page and the data API are still the chart app's code in this process (lib.page());
 the App base takes the server over at 0.3.0.
 
+1.15.0 (Monday list item 30, step 4; the user, 2026-11-24: "through the rust interface", then "inheritance bro";
+2026-11-25: the instance forms move to the platform's Databases section, the platform the only writer of instance
+settings): IntegratorApp inherits the library's platform core (liminal_libs.apps.platform.Platform), not the whole
+liminal-platform app. It needs the database plugins (PLATFORM_NEEDS), holds them in its own process with its own login
+and opens its databases through them there (the data path pays no hop), and it is not the running platform: it reads
+the instance settings and never writes them. A change to an instance is asked of the running platform over liminal-net
+(its node platform-databases: Platform.change_on_platform), never over HTTP; with no platform running it is said, in
+words, and nothing is started.
+
 Its own routes (`api`): the databases it keeps, for its page's Databases view (the user, 2026-11-07:
-"the integrator will have stats for the databases themselves, the platform only cares about
-hardware"): `GET /api/databases` the list, `GET /api/databases/detail?id=` one database (databases.py);
-and the database plugins' instances (1.12.0; the user, 2026-11-15: "for the integrator i need plugins for
-each type of database ... each instance in the plugin has it's own configuration how it's shared, ports,
-permissions etc"): `GET /api/databases/plugins` every engine's plugin with its instances, `POST
-/api/databases/instances` one of the page's forms answered by its plugin (instances.py); and the auditors (1.13.0;
-the user, 2026-11-18: "an auditor plugin, for auditing sources and maintaining the integrity of the feeds; for the
-integrator"): `GET /api/auditor` where they stand (their policy, the fetch cache, the last sweep, the findings),
-`POST /api/auditor/run` an audit or a sweep asked for now (auditors.py)."""
+"the integrator will have stats for the databases themselves"): `GET /api/databases` the list, `GET
+/api/databases/detail?id=` one database (databases.py), its figures and nobody else's; the database plugins'
+instances (1.12.0; the user, 2026-11-15: "for the integrator i need plugins for each type of database ... each
+instance in the plugin has it's own configuration how it's shared, ports, permissions etc"): `GET
+/api/databases/plugins` every engine's plugin with its instances (the library's overview, which offers no change here),
+`POST /api/databases/instances` a test answered here, a change carried to the platform (instances.py, the library's
+names); and the auditors (1.13.0; the user, 2026-11-18: "an auditor plugin, for auditing sources and maintaining the
+integrity of the feeds; for the integrator"): `GET /api/auditor` where they stand (their policy, the fetch cache, the
+last sweep, the findings), `POST /api/auditor/run` an audit or a sweep asked for now (auditors.py)."""
 from __future__ import annotations
 
 import threading
@@ -26,8 +35,11 @@ from pathlib import Path
 
 from . import lib
 
+# what a change to an instance is answered with while no platform runs (503): where it is made, and why not now
+PLATFORM_DOWN = "change this on the platform's Databases section; the platform is not running"
 
-class IntegratorApp(lib.App):
+
+class IntegratorApp(lib.Platform):
     NAME = "integrator"
     TITLE = "Liminal Integrator"
     ICON = "scroll"  # the fetcher's icon on the rail (icons.js)
@@ -40,11 +52,15 @@ class IntegratorApp(lib.App):
     # its page's server (liminal-charts serve_integrator), the page its sign-in until signed in there; the data API is
     # not behind it (the chart app's front reads it). LIMINAL_INTEGRATOR_LOGIN "none" or "off": none.
     LOGIN, LOGIN_VAR = True, "LIMINAL_INTEGRATOR_LOGIN"
+    # the platform core it inherits (1.15.0): the database plugins attached by this need; not the writer (PLATFORM_WRITER
+    # stays False): the running platform alone changes instance settings
+    PLATFORM_NEEDS = ("database",)
 
-    def __init__(self, log=print, login: lib.Login | None = None, db_path: Path | None = None):
+    def __init__(self, log=print, login: lib.Login | None = None, db_path: Path | None = None, *, node_factory=None):
         # A daemon has no browser session: the user environment variables stand in for the login (the
         # machine's user is the signed-in user) until it can hold a session of its own.
-        super().__init__(log=log, login=login if login is not None else lib.EnvironmentLogin())
+        # node_factory: liminal_net.Node (the default), or a test's stand-in: what reaches the platform's node
+        super().__init__(log=log, login=login if login is not None else lib.EnvironmentLogin(), node_factory=node_factory)
         self.db_path = Path(db_path) if db_path is not None else None  # its database: the data folder is beside it
         self._databases = None
         self._databases_lock = threading.Lock()
@@ -59,8 +75,13 @@ class IntegratorApp(lib.App):
 
     def attach_plugins(self, only: str | None = None) -> list[str]:
         """Every plugin of this system the registry loaded (`only`: another system), attached here with
-        this app's login; the names attached (a plugin another app holds is left alone)."""
-        return lib.attach_registry(self, only=self.SYSTEM if only is None else only)
+        this app's login; the names attached (a plugin another app holds is left alone). 1.15.0: with this system's,
+        the kinds the platform core needs (Platform.attach_needs: the database plugins, platform plugins since
+        liminal-libs 1.90.0), attached once."""
+        out = lib.attach_registry(self, only=self.SYSTEM if only is None else only)
+        if only is None:
+            out += [name for name in self.attach_needs() if name not in out]
+        return out
 
     @property
     def databases(self):
@@ -77,6 +98,32 @@ class IntegratorApp(lib.App):
                 self._databases = Databases(folder, log=self.log, extra=lambda: instances.elsewhere(self))
             return self._databases
 
+    def instance_change(self, body: dict) -> dict:
+        """One form of the page answered (POST /api/databases/instances, 1.15.0): a test here, in this process (an
+        instance opened for reading, as the data path opens it); a change asked of the running platform through its
+        node, the one writer (Platform.change_on_platform), and its refusal back as it was said there (Asked: its
+        status, its words, what accepts it). With no platform running, said in words (Refused 503, PLATFORM_DOWN) and
+        nothing started or written here. A change made there is listed here at once (the folder's figures forgotten)."""
+        from . import instances
+
+        body = body if isinstance(body, dict) else {}
+        if instances.text_of(body, "action") not in instances.CHANGES:
+            return self.instances_asked(body)
+        try:
+            out = self.change_on_platform(body)
+        except instances.Asked:
+            raise
+        except lib.Refused as e:
+            if e.status != HTTPStatus.SERVICE_UNAVAILABLE:
+                raise
+            self.log(f"{self.NAME}: {instances.text_of(body, 'plugin')} {instances.text_of(body, 'action')} not asked: "
+                     f"{e.reason}")
+            raise lib.Refused(HTTPStatus.SERVICE_UNAVAILABLE, PLATFORM_DOWN) from None
+        forget = getattr(self.databases, "forget", None)
+        if callable(forget):
+            forget()
+        return out
+
     def api(self, handler, method: str, path: str, query: dict, body: dict | None):
         if method == "GET" and path == "/api/databases":
             return 200, self.databases.overview()
@@ -89,13 +136,16 @@ class IntegratorApp(lib.App):
             except LookupError as e:
                 raise lib.Refused(HTTPStatus.NOT_FOUND, str(e)) from None
         if method == "GET" and path == "/api/databases/plugins":
-            from . import instances
-
-            return 200, instances.overview(self)
+            return 200, self.databases_overview()  # the platform core's: the library's overview, no change offered here
         if method == "POST" and path == "/api/databases/instances":
             from . import instances
 
-            return 200, instances.ask(self, body if isinstance(body, dict) else {})
+            try:
+                return 200, self.instance_change(body if isinstance(body, dict) else {})
+            except instances.Asked as e:
+                # the plugin's words and what accepts its refusal (the page's second question): the frame's handler of
+                # a Refused would send only {"error"}
+                return e.status, e.answer()
         if method == "GET" and path == "/api/auditor":
             from . import auditors
 

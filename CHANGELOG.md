@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.15.0 (2026-11-25)
+
+The integrator inherits the platform core (Monday list item 30, step 4; the user, 2026-11-24: "through the rust
+interface", then "inheritance bro"; 2026-11-25: the instance forms move to the platform's Databases section, the
+platform the only writer of instance settings, the integrator keeping the figures), on liminal-libs 1.90.0:
+- **`IntegratorApp(Platform)`.** The integrator's app is built on the library's platform core
+  (`liminal_libs.apps.platform.Platform`), not on the liminal-platform app: `PLATFORM_NEEDS = ("database",)`, so it
+  attaches the database plugins (platform plugins since liminal-libs 1.90.0) by that need with its own login, in its
+  own process, and opens its databases there (the data path pays no hop). It is not the writer (`PLATFORM_WRITER`
+  stays false) and serves no Databases section of its own. `attach_plugins` attaches its system's plugins and the
+  kinds it needs, each once.
+- **The instances' list is the library's.** `GET /api/databases/plugins` answers the platform core's
+  `databases_overview` (liminal-libs `apps/databases.py`): the same rows, with `writer: false`, and each plugin's
+  `can` all false with why: "change this on the platform's Databases section". `instances.py` is now the library's
+  names imported (`overview`, `ask`, `elsewhere`, `Asked`, `ours`, ...), not copies of them.
+- **A change goes to the platform, over liminal-net.** `POST /api/databases/instances` answers a test here, in this
+  process; a change (new, connect, share, port, credentials, forget) is asked of the running platform through its
+  node `platform-databases` (`Platform.change_on_platform`), reached without a launcher, and made there through its
+  login, never written here. Its refusal comes back as it was said there (its status, its words, what accepts it),
+  and the folder's figures are listed again after a change. With no platform running the integrator answers 503,
+  "change this on the platform's Databases section; the platform is not running", writes nothing and starts nothing.
+- **Fix: a refusal's `accept` reaches the page.** The route returns `e.status, e.answer()` on `Asked`, as the
+  platform does: the frame's handler of a `Refused` sends only `{"error"}`, so the page's second question (a server
+  off this machine: `accept_remote`) was never asked through the integrator's own server.
+- **Fix: a database plugin left out at loading is said under either name.** `load_errors` is the library's, whose
+  `ours` matches `plugin-platform-*` as well as `plugin-integrator-*`; the integrator's own matched only the old
+  names, so a renamed plugin that failed to load was left off the page.
+- The library's floor rises to `liminal-libs>=1.90.0`.
+- Tests on stand-ins (`test_instances.py`): a running platform of the library's core with its own copies of the
+  stand-in plugins and the same user's environment, served as a stand-in liminal-net node (nothing listens, nothing is
+  started); the integrator's change made there, its refusals and `accept` back, the platform not running said in
+  words; `conftest.py` refuses any real liminal-net node in a test.
+
 ## 1.14.0 (2026-11-24)
 
 An end in good order (Monday list item 38; the shutdown audit of 2026-11-24: "service: ended" was in no day's log, and

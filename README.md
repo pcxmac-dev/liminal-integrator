@@ -20,6 +20,12 @@ its pages to it; the library both build on is [liminal-libs](https://github.com/
   SQLite's statistics or an estimate from its B-tree, never a scan; a feed's DuckDB months from its manifest),
   and Liminal's MongoDB's databases and collections while it runs (never started to be asked). Each database
   is opened read-only for the moment its figures are read, and only while the page looks.
+- The database plugins (SQLite's, DuckDB's, MongoDB's: platform plugins, `plugin-platform-*`) held in its own
+  process, as the platform core it inherits holds them (liminal-libs's `Platform`): it opens its databases through
+  them and lists each one's instances on the page, but it is not the one that changes them. A change to an instance
+  (new, connect, share, port, sign-in, forget) is made on the platform's Databases section; one asked here is carried
+  to the running platform over liminal-net (its node `platform-databases`), never over HTTP, and with no platform
+  running it is refused in words. A test of an instance is answered here.
 - A daemon when you want one (`--daemon`, on `serve` or `service install`): the fetcher held for good
   and started again if it ends, so it collects what it can on its own.
 - Every plugin found, or the ones you name (`--plugins twse,tiingo`; `--plugins none` for none at all):

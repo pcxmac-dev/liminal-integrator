@@ -117,3 +117,18 @@ def no_real_databases(monkeypatch):
     monkeypatch.setattr(databases, "port_open", lambda host, port, timeout=0.3: False)
     yield
     assert not refused, f"a test opened a real database: {refused}"
+
+
+@pytest.fixture(autouse=True)
+def no_real_nodes(monkeypatch):
+    """1.15.0 (Monday list item 30, step 4): tests never make a real liminal-net node, so nothing listens and the
+    running platform's node is never reached: a node is made only from a test's stand-in (node_factory)."""
+    from liminal_libs import nodes
+
+    made = nodes.make_node
+
+    def stand_ins_only(name, kind, hillock, interface, scope=None, node_factory=None, timing=None):
+        if node_factory is None:
+            raise AssertionError(f"a test made a real liminal-net node: {name}")
+        return made(name, kind, hillock, interface, scope, node_factory, timing)
+    monkeypatch.setattr(nodes, "make_node", stand_ins_only)
