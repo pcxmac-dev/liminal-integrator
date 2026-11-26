@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.16.1 (2026-11-26)
+
+The integrator's own External and Internal API (Monday list item 17; the user, 2026-11-16: "for all apps, and all
+plugins, there should be an external api tab, and an internal api tab, the internal api is for interfaces the plugin
+shares with the rest of the app, the external should be all the SDKs/APIs the plugin associates with"), drawn as
+"This app", the first entry of its page's Plugins view (liminal-charts 0.2.10):
+- **Its Internal API.** `GET /api/app/apis` (answered by its frame: the data API leaves it there) lists its routes as
+  the server at its port answers them (`IntegratorApp.routes`): the data API's first, as the charts list them
+  (`lib.page_routes`: liminal-charts' `gui/routes.py`), the frame's writes that server does not answer said so in
+  the integrator's words (`POST /api/app/stop` ...: its service ends on its stop event, or on SIGINT or SIGTERM),
+  then its own six (`routes.py`: the Databases view's three reads and its form, the auditors' read and their run).
+  Beside them the platform it links over liminal-net (`LINKED`) and a few words of its own (`INTERNAL_NOTES`: the
+  page is the charts' code here, the fetcher's host is reached over its pipe alone, the login is an object held
+  here, the AI assistants are the platform's).
+- **What its code calls on its plugins.** `CALLS` and `ATTRIBUTES` are what its own modules take of a plugin (the
+  auditors' plugin, auditors.py); `calls_with_page()` adds the data API's (liminal-charts' `ChartsApp.CALLS`,
+  `lib.page_calls`) on the object when an Internal API is first asked, so a plugin's Internal API on its page says
+  what the data API calls on it.
+- **Its External API.** `IntegratorApp.apis` (`apis.py`, imported when asked): SQLite through Python's sqlite3 and
+  the files' own pages, DuckDB, MongoDB through PyMongo (the Databases view), the Task Scheduler's cmdlets and a
+  systemd user unit (`service install`), Python's signal module (the service's stop) and git (Codebase). Every
+  address is one already read on a maker's page for a card that landed before, with that card's day.
+- A charts from before 0.2.10 has no table and no calls: its own six routes and its own calls alone, and nothing
+  fails. Its page shows "This app" once the integrator is restarted (its index.html is kept for the process).
+
 ## 1.16.0 (2026-11-25)
 
 A store's pick naming an instance (Monday list item 10; item 30, step 7), on liminal-libs 1.91.0:
