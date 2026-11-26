@@ -84,3 +84,46 @@ def test_no_other_py_of_the_integrator_names_an_outside_host():
     assert {(f, h) for f, h in found if f != "apis.py"} <= {(f, "127.0.0.1") for f, _ in found}
     assert {"www.sqlite.org", "duckdb.org", "www.mongodb.com", "learn.microsoft.com", "www.freedesktop.org",
             "git-scm.com", "docs.python.org"} <= {h for f, h in found if f == "apis.py"}
+
+
+def _taken_from(source: str, name: str) -> tuple[set[str], set[str]]:
+    """The attributes a source takes from a name (`plugin.options`), and those of them it calls (`plugin.settings(...)`)."""
+    import ast
+
+    tree = ast.parse(source)
+    taken = {n.attr for n in ast.walk(tree)
+             if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == name}
+    called = {n.func.attr for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name)
+              and n.func.value.id == name}
+    return taken, called
+
+
+def test_its_calls_and_attributes_are_what_its_own_modules_take():
+    from liminal_integrator import auditors
+
+    taken, called = _taken_from(Path(auditors.__file__).read_text(encoding="utf-8"), "plugin")
+    assert set(IntegratorApp.CALLS) == {"auditor"} and set(IntegratorApp.ATTRIBUTES) == {"auditor"}
+    assert set(IntegratorApp.CALLS["auditor"]) == called
+    assert set(IntegratorApp.ATTRIBUTES["auditor"]) == taken - called
+
+
+def test_the_data_apis_calls_join_its_own_when_an_internal_api_is_asked():
+    from liminal_charts.frame import ChartsApp
+
+    app = IntegratorApp(log=lambda m: None)
+    assert "CALLS" not in app.__dict__  # nothing of the charts' asked before
+    inner = app.internal()
+    for kind in ChartsApp.CALLS:
+        assert set(app.CALLS[kind]) == set(ChartsApp.CALLS[kind]) | set(IntegratorApp.CALLS.get(kind, {})), kind
+        assert set(app.ATTRIBUTES[kind]) == set(ChartsApp.ATTRIBUTES[kind]) | set(IntegratorApp.ATTRIBUTES.get(kind, ()))
+    assert app.CALLS["auditor"]["settings"] == IntegratorApp.CALLS["auditor"]["settings"]  # its own first
+    assert set(inner["calls"]) == set(app.CALLS) and set(inner["attributes"]) == set(app.ATTRIBUTES)
+    assert IntegratorApp.CALLS == {"auditor": IntegratorApp.CALLS["auditor"]}  # the class's own left as it was
+
+
+def test_a_charts_from_before_leaves_its_own_calls(monkeypatch):
+    monkeypatch.setattr(lib, "page_calls", lambda: ({}, {}))
+    app = IntegratorApp(log=lambda m: None)
+    inner = app.internal()
+    assert app.CALLS == IntegratorApp.CALLS and set(inner["calls"]) == {"auditor"}

@@ -1,7 +1,8 @@
 """Every call into the library goes through here (the user, 2026-11-01: "make sure that the library
 calls contribute to code reuse"; "all lib calls will point to liminal-lib"): what the integrator
 uses of liminal-libs, by name, and nothing of the charts app but the page and data API it serves
-in its own process (page()) and what that data API answers, for its own Internal API (page_routes()). A library piece the integrator needs is added to liminal-libs, never
+in its own process (page()) and what that data API answers and asks of the plugins, for its own Internal API
+(page_routes(), page_calls()). A library piece the integrator needs is added to liminal-libs, never
 written here twice."""
 from __future__ import annotations
 
@@ -52,3 +53,16 @@ def page_routes() -> tuple:
     except ImportError:
         return (), ()
     return tuple(DATA_ROUTES), tuple(NOT_ANSWERED_PATHS)
+
+
+def page_calls() -> tuple[dict, dict]:
+    """What the page's data API calls and reads on a plugin of each kind, as the charts declare it (liminal-charts
+    0.2.10's ChartsApp.CALLS and ATTRIBUTES: their gui/plugins.py and gui/server.py, the code that works with the
+    integrator's plugins in this process), for the integrator's own Internal API and its plugins'
+    (IntegratorApp.calls_with_page). Imported when an Internal API is asked; a charts from before: none."""
+    try:
+        from liminal_charts.frame import ChartsApp
+    except ImportError:
+        return {}, {}
+    calls, attributes = getattr(ChartsApp, "CALLS", {}), getattr(ChartsApp, "ATTRIBUTES", {})
+    return (calls if isinstance(calls, dict) else {}), (attributes if isinstance(attributes, dict) else {})

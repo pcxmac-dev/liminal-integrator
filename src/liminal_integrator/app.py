@@ -83,6 +83,21 @@ class IntegratorApp(lib.Platform):
         "read from the plugin objects the registry loaded, nothing of them called.",
     )
 
+    # what its own modules call and read on a plugin of each kind, held to them by tests/test_api_views.py: the auditors'
+    # plugin (auditors.py). Its feeds and publishers are asked by name through the library (lib.feed_profiles,
+    # lib.supports, lib.feed_closed, the collector), its database plugins through the library's Databases section:
+    # none listed here. What the page's data API calls on them (the charts' code in this process) is added when an
+    # Internal API is asked (calls_with_page)
+    CALLS = {
+        "auditor": {
+            "settings": "its policy, made from its options as this app's login has them (auditors.py policy_of): the "
+                        "auditors' page (GET /api/auditor) and their runs",
+        },
+    }
+    ATTRIBUTES = {  # read, never called
+        "auditor": ("login", "options", "name", "title", "version", "origin"),
+    }
+
     def __init__(self, log=print, login: lib.Login | None = None, db_path: Path | None = None, *, node_factory=None):
         # A daemon has no browser session: the user environment variables stand in for the login (the
         # machine's user is the signed-in user) until it can hold a session of its own.
@@ -99,6 +114,33 @@ class IntegratorApp(lib.Platform):
         go, the extras and the auditors ended, its store closed) before a plugin it uses is let go. None elsewhere
         (the page's frame in the service)."""
         return (self.fetcher,) if self.fetcher is not None else ()
+
+    def calls_with_page(self) -> None:
+        """Its CALLS and ATTRIBUTES with the page's data API's beside its own (lib.page_calls: the charts' code that
+        works with its plugins in this process), set on this object once, when an Internal API is first asked: its own
+        first, each name once. A charts from before: its own alone."""
+        if "CALLS" in self.__dict__:
+            return
+        page_calls, page_attributes = lib.page_calls()
+        calls = {kind: dict(names) for kind, names in type(self).CALLS.items()}
+        for kind, names in page_calls.items():
+            if isinstance(names, dict):
+                mine = calls.setdefault(kind, {})
+                mine.update({name: how for name, how in names.items() if name not in mine})
+        attributes = {kind: tuple(names) for kind, names in type(self).ATTRIBUTES.items()}
+        for kind, names in page_attributes.items():
+            if isinstance(names, (tuple, list)):
+                attributes[kind] = tuple(dict.fromkeys((*attributes.get(kind, ()), *names)))
+        self.ATTRIBUTES = attributes
+        self.CALLS = calls
+
+    def internal(self) -> dict:
+        self.calls_with_page()
+        return super().internal()
+
+    def plugin_internal(self, plugin, tabs=None) -> dict:
+        self.calls_with_page()
+        return super().plugin_internal(plugin, tabs)
 
     @property
     def apis(self) -> tuple:
