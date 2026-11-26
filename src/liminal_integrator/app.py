@@ -26,7 +26,13 @@ instance in the plugin has it's own configuration how it's shared, ports, permis
 `POST /api/databases/instances` a test answered here, a change carried to the platform (instances.py, the library's
 names); and the auditors (1.13.0; the user, 2026-11-18: "an auditor plugin, for auditing sources and maintaining the
 integrity of the feeds; for the integrator"): `GET /api/auditor` where they stand (their policy, the fetch cache, the
-last sweep, the findings), `POST /api/auditor/run` an audit or a sweep asked for now (auditors.py)."""
+last sweep, the findings), `POST /api/auditor/run` an audit or a sweep asked for now (auditors.py).
+
+1.16.1 (Monday list item 17; the user, 2026-11-16: "for all apps, and all plugins, there should be an external api
+tab, and an internal api tab"): its own two views, GET /api/app/apis, the first entry of its page's Plugins view
+("This app"). Its Internal API lists its routes (routes(): the data API's, as the charts list them, then its own six,
+routes.py), the platform it links and a few words of its own (INTERNAL_NOTES); its External API the cards of what its
+own code associates with (apis.py)."""
 from __future__ import annotations
 
 import threading
@@ -34,6 +40,7 @@ from http import HTTPStatus
 from pathlib import Path
 
 from . import lib
+from .routes import ROUTES, unanswered
 
 # what a change to an instance is answered with while no platform runs (503): where it is made, and why not now
 PLATFORM_DOWN = "change this on the platform's Databases section; the platform is not running"
@@ -55,6 +62,26 @@ class IntegratorApp(lib.Platform):
     # the platform core it inherits (1.15.0): the database plugins attached by this need; not the writer (PLATFORM_WRITER
     # stays False): the running platform alone changes instance settings
     PLATFORM_NEEDS = ("database",)
+    # its own Internal API (1.16.1, Monday list item 17; liminal-libs 1.63.0's App, GET /api/app/apis): its own routes
+    # (routes()), the app it links and a few words of its own
+    ROUTES = ROUTES
+    LINKED = (
+        ("platform", "linked over liminal-net (its node platform-databases), never over HTTP and never started from "
+                     "here: a change to a database plugin's instance is asked of the running platform, the one writer "
+                     "of their settings; with none running it is said, in words"),
+    )
+    INTERNAL_NOTES = (
+        "The page and the data API at the integrator's port are the charts' code, served in this process (liminal-charts' "
+        "serve_integrator): their routes are listed first, as the charts list them, and what they leave to this app "
+        "(its databases, its auditors, the frame's own routes) is answered here.",
+        "The fetcher runs in a host process of its own (liminal_libs.host's fetcher): the page reaches it over its pipe "
+        "alone, never over HTTP, while a page is in touch (or for good as the daemon). That process holds an "
+        "IntegratorApp of its own (Fetcher.app), with no port.",
+        "The login is an object of the login class held here, the integrator its superclass: its page and its API under "
+        "/login/ at the integrator's own port, no port of its own. The plugins read their keys through it.",
+        "The AI assistants are the platform's: they are not attached here, and their entries on the Plugins view are "
+        "read from the plugin objects the registry loaded, nothing of them called.",
+    )
 
     def __init__(self, log=print, login: lib.Login | None = None, db_path: Path | None = None, *, node_factory=None):
         # A daemon has no browser session: the user environment variables stand in for the login (the
@@ -72,6 +99,19 @@ class IntegratorApp(lib.Platform):
         go, the extras and the auditors ended, its store closed) before a plugin it uses is let go. None elsewhere
         (the page's frame in the service)."""
         return (self.fetcher,) if self.fetcher is not None else ()
+
+    def routes(self) -> tuple:
+        """Its own routes as its Internal API lists them (1.16.1): the page's data API's first, as the charts list them
+        (lib.page_routes: its /api/plugins, /api/interface and /api/ui come before the frame's), with the frame's writes
+        its server does not answer said so (routes.unanswered), then its own (ROUTES), each (method, path) once. A
+        charts from before 0.2.10: its own alone."""
+        data, not_answered = lib.page_routes()
+        out, seen = [], set()
+        for row in (*data, *unanswered(not_answered), *self.ROUTES):
+            if (row[0], row[1]) not in seen:
+                seen.add((row[0], row[1]))
+                out.append(row)
+        return tuple(out)
 
     def attach_plugins(self, only: str | None = None) -> list[str]:
         """Every plugin of this system the registry loaded (`only`: another system), attached here with

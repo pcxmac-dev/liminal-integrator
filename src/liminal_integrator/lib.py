@@ -1,7 +1,7 @@
 """Every call into the library goes through here (the user, 2026-11-01: "make sure that the library
 calls contribute to code reuse"; "all lib calls will point to liminal-lib"): what the integrator
 uses of liminal-libs, by name, and nothing of the charts app but the page and data API it serves
-in its own process (page()). A library piece the integrator needs is added to liminal-libs, never
+in its own process (page()) and what that data API answers, for its own Internal API (page_routes()). A library piece the integrator needs is added to liminal-libs, never
 written here twice."""
 from __future__ import annotations
 
@@ -40,3 +40,15 @@ def page():
     from liminal_charts.gui.server import serve_integrator
 
     return serve_integrator
+
+
+def page_routes() -> tuple:
+    """What the page's data API answers, as the charts list it (liminal-charts 0.2.10's gui/routes.py): its rows in its
+    chain's order, then the frame's writes it does not answer as (method, path) pairs, for the integrator's own
+    Internal API (IntegratorApp.routes). Beside page(), the integrator's one other use of the charts' code, imported
+    when the Internal API is asked; a charts from before 0.2.10 has no table: none, and nothing fails."""
+    try:
+        from liminal_charts.gui.routes import DATA_ROUTES, NOT_ANSWERED_PATHS
+    except ImportError:
+        return (), ()
+    return tuple(DATA_ROUTES), tuple(NOT_ANSWERED_PATHS)
