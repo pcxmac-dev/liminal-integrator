@@ -5,9 +5,14 @@ Nothing of a plugin is asked, nothing is reached outside this machine."""
 from __future__ import annotations
 
 import json
+import re
 from http.client import HTTPConnection
+from pathlib import Path
 
-from liminal_integrator import lib, routes
+from liminal_libs.apis import problems
+
+import liminal_integrator
+from liminal_integrator import apis, lib, routes
 from liminal_integrator.app import IntegratorApp
 
 
@@ -43,6 +48,8 @@ def test_the_integrator_answers_its_own_two_views():
     assert [ln["name"] for ln in inner["linked"]] == ["platform"] and "liminal-net" in inner["linked"][0]["how"]
     assert len(inner["notes"]) == len(IntegratorApp.INTERNAL_NOTES)
     assert all(len(n) <= 400 for n in IntegratorApp.INTERNAL_NOTES)
+    # its External API: the cards of what its own code associates with
+    assert [a["name"] for a in got["apis"]] == [a.name for a in apis.APIS]
 
 
 def test_a_charts_from_before_leaves_its_own_six_and_no_error(monkeypatch):
@@ -55,3 +62,25 @@ def test_a_charts_from_before_leaves_its_own_six_and_no_error(monkeypatch):
         app.stop()
     own = [(r["method"], r["path"]) for r in got["internal"]["routes"] if r["own"]]
     assert status == 200 and own == [(r[0], r[1]) for r in routes.ROUTES]
+
+
+URL = re.compile(r"\b(?:https?|wss?|ftp)://([A-Za-z0-9.-]+)")  # a scheme://host literal, as the charts' boundary test
+
+
+def test_its_cards_are_sound():
+    assert problems(apis.APIS) == []
+    assert IntegratorApp(log=lambda m: None).apis is apis.APIS
+    assert {a.name for a in apis.APIS} >= {"SQLite, through Python's sqlite3", "DuckDB", "MongoDB, through PyMongo",
+                                            "ScheduledTasks (PowerShell)", "systemd (a user unit)", "git"}
+
+
+def test_no_other_py_of_the_integrator_names_an_outside_host():
+    """The user's rule of 2026-10-31 (the app's code names no provider's host; links for people excepted): the
+    integrator's outside addresses are its cards' links, in apis.py alone; every other module names this machine at
+    most."""
+    root = Path(liminal_integrator.__file__).parent
+    found = {(p.relative_to(root).as_posix(), h.lower().rstrip("."))
+             for p in root.rglob("*.py") for h in URL.findall(p.read_text(encoding="utf-8"))}
+    assert {(f, h) for f, h in found if f != "apis.py"} <= {(f, "127.0.0.1") for f, _ in found}
+    assert {"www.sqlite.org", "duckdb.org", "www.mongodb.com", "learn.microsoft.com", "www.freedesktop.org",
+            "git-scm.com", "docs.python.org"} <= {h for f, h in found if f == "apis.py"}

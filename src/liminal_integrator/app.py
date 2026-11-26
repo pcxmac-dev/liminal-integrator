@@ -100,6 +100,14 @@ class IntegratorApp(lib.Platform):
         (the page's frame in the service)."""
         return (self.fetcher,) if self.fetcher is not None else ()
 
+    @property
+    def apis(self) -> tuple:
+        """What the integrator's own code associates with, for its own External API (apis.py, 1.16.1): imported when
+        first asked, so its start loads nothing more for it."""
+        from .apis import APIS
+
+        return APIS
+
     def routes(self) -> tuple:
         """Its own routes as its Internal API lists them (1.16.1): the page's data API's first, as the charts list them
         (lib.page_routes: its /api/plugins, /api/interface and /api/ui come before the frame's), with the frame's writes
